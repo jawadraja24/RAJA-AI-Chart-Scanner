@@ -500,37 +500,14 @@ def _group_columns(active: np.ndarray) -> list[tuple[int, int]]:
     return groups
 
 
-def analyze_chart_image(raw: bytes) -> dict[str, Any]:
-    try:
-        image = Image.open(io.BytesIO(raw))
-        image = ImageOps.exif_transpose(image).convert("RGB")
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
-        raise ValueError("Image could not be opened. Upload a PNG/JPG chart screenshot.") from exc
 
-    w0, h0 = image.size
-    if w0 < 240 or h0 < 180:
-        raise ValueError("Image is too small. Use a clearer chart screenshot.")
+def _detect_candles_in_chart(chart: np.ndarray) -> tuple[list[dict[str, Any]], float, list[str], float, float]:
+    """Detect candle-like red/green/cyan columns in one candidate chart crop.
 
-    scale = min(1.0, 1400.0 / max(w0, h0))
-    if scale < 1.0:
-        image = image.resize(
-            (max(1, int(w0 * scale)), max(1, int(h0 * scale))),
-            Image.Resampling.LANCZOS,
-        )
-
-    arr = np.asarray(image, dtype=np.uint8)
-    h, w, _ = arr.shape
-
-    # Focus the quality check and strategy engine on the useful chart area instead
-    # of browser chrome / broker sidebars. This prevents clear screenshots from
-    # being falsely labelled blurry because large dark UI areas have few edges.
-    x1, x2 = int(w * 0.035), int(w * 0.86)
-    y1, y2 = int(h * 0.24), int(h * 0.94)
-    if x2 - x1 < 220 or y2 - y1 < 160:
-        x1, x2 = int(w * 0.06), int(w * 0.94)
-        y1, y2 = int(h * 0.12), int(h * 0.90)
-
-    chart = arr[y1:y2, x1:x2]
+    The thresholds are deliberately tolerant of mobile screenshots, compression and
+    display scaling. Wide UI buttons/text are rejected by the candle-width filter.
+    Returns candles, quality, quality notes, horizontal span and colored density.
+    """
     ch, cw, _ = chart.shape
     quality, quality_notes = _quality_score(chart)
 
@@ -538,29 +515,31 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
     g = chart[:, :, 1].astype(np.int16)
     b = chart[:, :, 2].astype(np.int16)
 
-    # Common red/green/cyan candle themes used by broker chart UIs.
-    red = (r > 135) & (r > g * 1.18) & (r > b * 1.10)
-    green = (g > 115) & (g > r * 1.10) & (g > b * 0.72)
-    cyan = (g > 120) & (b > 120) & (r < 150) & ((g + b) > (r * 1.9 + 70))
+    # Tolerant broker-theme masks. The difference checks avoid white/yellow UI text
+    # while keeping anti-aliased/compressed candle pixels on phones.
+    red = (r > 100) & ((r - g) > 24) & ((r - b) > 8)
+    green = (g > 90) & ((g - r) > 20) & ((g - b) > -28)
+    cyan = (g > 105) & (b > 105) & (r < 165) & (((g + b) - 2 * r) > 45)
     bull = green | cyan
     colored = red | bull
 
     per_col = colored.sum(axis=0)
-    threshold = max(3, int(ch * 0.0055))
+    threshold = max(2, int(ch * 0.0038))
     active = per_col >= threshold
     groups = _group_columns(active)
 
     candles: list[dict[str, Any]] = []
+    max_width = max(46, int(cw * 0.065))
     for left, right in groups:
         width = right - left + 1
-        if width > max(38, int(cw * 0.045)):
+        if width > max_width:
             continue
         block = colored[:, left:right + 1]
         ys, _ = np.where(block)
-        if len(ys) < 6:
+        if len(ys) < 5:
             continue
         height = int(ys.max() - ys.min() + 1)
-        if height < 4 or height > int(ch * 0.68):
+        if height < 3 or height > int(ch * 0.72):
             continue
         red_count = int(red[:, left:right + 1].sum())
         bull_count = int(bull[:, left:right + 1].sum())
@@ -575,10 +554,10 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
             "range": float(height),
         })
 
-    # Merge body/wick fragments from the same visual candle.
     merged: list[dict[str, Any]] = []
+    merge_gap = max(3, int(cw * 0.0045))
     for c in candles:
-        if merged and abs(c["x"] - merged[-1]["x"]) <= 3:
+        if merged and abs(c["x"] - merged[-1]["x"]) <= merge_gap:
             prev = merged[-1]
             total = prev["pixels"] + c["pixels"]
             prev["y"] = (prev["y"] * prev["pixels"] + c["y"] * c["pixels"]) / max(total, 1)
@@ -590,7 +569,93 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
             prev["pixels"] = total
         else:
             merged.append(dict(c))
-    candles = merged[-70:]
+
+    candles = merged[-80:]
+    if len(candles) >= 2:
+        span = float((candles[-1]["x"] - candles[0]["x"]) / max(cw, 1))
+    else:
+        span = 0.0
+    density = float(colored.mean())
+    return candles, quality, quality_notes, max(0.0, span), density
+
+
+def _candidate_chart_regions(arr: np.ndarray) -> list[tuple[str, np.ndarray]]:
+    """Return desktop + mobile chart crops; the engine scores and chooses the best one."""
+    h, w, _ = arr.shape
+    portrait = h > w * 1.12
+    specs: list[tuple[str, float, float, float, float]]
+    if portrait:
+        specs = [
+            ("mobile-upper", 0.01, 0.99, 0.10, 0.72),
+            ("mobile-middle", 0.01, 0.99, 0.18, 0.84),
+            ("mobile-lower", 0.01, 0.99, 0.28, 0.96),
+            ("mobile-wide", 0.01, 0.99, 0.08, 0.94),
+            ("mobile-center", 0.05, 0.95, 0.14, 0.90),
+        ]
+    else:
+        specs = [
+            ("desktop-main", 0.035, 0.86, 0.24, 0.94),
+            ("desktop-wide", 0.02, 0.94, 0.18, 0.94),
+            ("desktop-center", 0.05, 0.90, 0.12, 0.90),
+            ("desktop-fullchart", 0.01, 0.99, 0.16, 0.96),
+        ]
+
+    out: list[tuple[str, np.ndarray]] = []
+    for name, xa, xb, ya, yb in specs:
+        x1, x2 = int(w * xa), int(w * xb)
+        y1, y2 = int(h * ya), int(h * yb)
+        if x2 - x1 >= 180 and y2 - y1 >= 140:
+            out.append((name, arr[y1:y2, x1:x2]))
+    return out
+
+def analyze_chart_image(raw: bytes) -> dict[str, Any]:
+    try:
+        image = Image.open(io.BytesIO(raw))
+        image = ImageOps.exif_transpose(image).convert("RGB")
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ValueError("Image could not be opened. Upload a PNG/JPG chart screenshot.") from exc
+
+    w0, h0 = image.size
+    if w0 < 240 or h0 < 180:
+        raise ValueError("Image is too small. Use a clearer chart screenshot.")
+
+    # Keep more detail on portrait/mobile screenshots; candle bodies can become only
+    # a few pixels wide after browser/share-sheet compression.
+    max_dim = 1800.0 if h0 > w0 * 1.12 else 1600.0
+    scale = min(1.0, max_dim / max(w0, h0))
+    if scale < 1.0:
+        image = image.resize(
+            (max(1, int(w0 * scale)), max(1, int(h0 * scale))),
+            Image.Resampling.LANCZOS,
+        )
+
+    arr = np.asarray(image, dtype=np.uint8)
+
+    # Adaptive crop selection fixes the common mobile failure where a fixed desktop
+    # crop misses the broker chart and returns 0 candles. Test several plausible
+    # chart windows, then select the one with the strongest candle structure.
+    best_region: tuple[str, np.ndarray, list[dict[str, Any]], float, list[str], float, float] | None = None
+    best_region_score = -1e9
+    for crop_name, candidate in _candidate_chart_regions(arr):
+        cands, q, qnotes, span, density = _detect_candles_in_chart(candidate)
+        count_score = min(len(cands), 60) * 3.0
+        span_score = min(1.0, span / 0.55) * 34.0
+        density_score = min(18.0, density * 900.0)
+        quality_score = q * 0.16
+        sparse_penalty = 22.0 if len(cands) < 6 else 0.0
+        score = count_score + span_score + density_score + quality_score - sparse_penalty
+        if score > best_region_score:
+            best_region_score = score
+            best_region = (crop_name, candidate, cands, q, qnotes, span, density)
+
+    if best_region is None:
+        chart = arr
+        candles, quality, quality_notes, _, _ = _detect_candles_in_chart(chart)
+        crop_name = "full-image"
+    else:
+        crop_name, chart, candles, quality, quality_notes, _, _ = best_region
+
+    ch, cw, _ = chart.shape
 
     reasons: list[str] = []
     warnings = list(quality_notes)
@@ -628,7 +693,8 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
             },
             "strategy_library": "Classic TA 15-Setup Library",
             "strategy_library_size": 15,
-            "engine": "RAJA Classic TA Strategy Engine V4",
+            "engine": "RAJA Classic TA Strategy Engine V4 · Mobile Adaptive",
+            "analysis_crop_mode": crop_name,
         }
 
     xs = np.array([c["x"] for c in candles], dtype=float)
@@ -953,7 +1019,8 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
             "Support / Resistance": "Recent visual range boundaries and rejection behaviour are evaluated",
             "Price Action": f"{count} candle-like structures analyzed",
         },
-        "engine": "RAJA Classic TA Strategy Engine V4",
+        "engine": "RAJA Classic TA Strategy Engine V4 · Mobile Adaptive",
+        "analysis_crop_mode": crop_name,
     }
 
 
