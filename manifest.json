@@ -1,0 +1,15 @@
+{
+  "name": "RAJA AI Chart Scanner",
+  "short_name": "RAJA Scanner",
+  "description": "RAJA AI V2 live-camera close-sync and screenshot chart scanner.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#090512",
+  "theme_color": "#0b0619",
+  "icons": [
+    {"src":"/static/raja-ai-icon-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"/static/raja-ai-icon-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}
