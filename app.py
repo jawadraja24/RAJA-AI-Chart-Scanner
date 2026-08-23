@@ -693,7 +693,7 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
             },
             "strategy_library": "Classic TA 15-Setup Library",
             "strategy_library_size": 15,
-            "engine": "RAJA Classic TA Strategy Engine V4 · Mobile Adaptive",
+            "engine": "RAJA Classic TA Strategy Engine V4 · Mobile Adaptive · V7",
             "analysis_crop_mode": crop_name,
         }
 
@@ -1019,14 +1019,16 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
             "Support / Resistance": "Recent visual range boundaries and rejection behaviour are evaluated",
             "Price Action": f"{count} candle-like structures analyzed",
         },
-        "engine": "RAJA Classic TA Strategy Engine V4 · Mobile Adaptive",
+        "engine": "RAJA Classic TA Strategy Engine V4 · Mobile Adaptive · V7",
         "analysis_crop_mode": crop_name,
     }
 
 
 @app.get("/")
 def home():
-    return send_from_directory(APP_DIR, "index.html")
+    resp = send_from_directory(APP_DIR, "index.html")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
 
 
 def _cleanup_shared_charts(max_age_seconds: int = 900) -> None:
@@ -1082,12 +1084,17 @@ def shared_image(token: str):
 
 @app.get("/manifest.json")
 def manifest():
-    return send_from_directory(APP_DIR, "manifest.json")
+    resp = send_from_directory(APP_DIR, "manifest.json")
+    resp.headers["Cache-Control"] = "no-cache, max-age=0"
+    return resp
 
 
 @app.get("/sw.js")
 def sw():
-    return send_from_directory(APP_DIR, "sw.js", mimetype="application/javascript")
+    resp = send_from_directory(APP_DIR, "sw.js", mimetype="application/javascript")
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Service-Worker-Allowed"] = "/"
+    return resp
 
 
 @app.get("/health")
@@ -1144,14 +1151,21 @@ def verify_license():
     label = str(data.get("device_label") or device)[:160]
     token = str(data.get("session_token") or "").strip()
     heartbeat = bool(data.get("heartbeat"))
-    if not key or not user or not device:
-        return jsonify({"status": "error", "message": "Key, user/UID and device are required."}), 400
+    if not key or not device:
+        return jsonify({"status": "error", "message": "License key and device are required."}), 400
     rec = get_license(key)
     if not rec or not rec.get("active"):
         return jsonify({"status": "error", "message": "Invalid or revoked license key."}), 401
     if _license_expired(rec):
         return jsonify({"status": "error", "message": "License expired. Renew access to continue."}), 401
-    if _norm_user(rec.get("user_id")) != user:
+    assigned_user = _norm_user(rec.get("user_id"))
+    if heartbeat and not user:
+        return jsonify({"status": "error", "message": "Active session user is missing."}), 400
+    if not user:
+        user = assigned_user
+    if not user:
+        return jsonify({"status": "error", "message": "This license has no assigned user/UID."}), 400
+    if assigned_user and assigned_user != user:
         return jsonify({"status": "error", "message": "This key is assigned to another user/UID."}), 403
     if heartbeat:
         if str(rec.get("device_id") or "") != device or str(rec.get("session_token") or "") != token:
