@@ -1,4 +1,4 @@
-const CACHE='raja-scanner-v9-shell-1';
+const CACHE='raja-scanner-v9-1-shell-1';
 const SHELL=['/manifest.json','/static/raja-ai-icon-192.png','/static/raja-ai-icon-512.png'];
 
 self.addEventListener('install',event=>{
