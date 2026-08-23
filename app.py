@@ -502,11 +502,11 @@ def _group_columns(active: np.ndarray) -> list[tuple[int, int]]:
 
 
 def _detect_candles_in_chart(chart: np.ndarray) -> tuple[list[dict[str, Any]], float, list[str], float, float]:
-    """Detect candle-like red/green/cyan columns in one candidate chart crop.
+    """Detect candle-like red/green columns and estimate body/wick geometry.
 
-    The thresholds are deliberately tolerant of mobile screenshots, compression and
-    display scaling. Wide UI buttons/text are rejected by the candle-width filter.
-    Returns candles, quality, quality notes, horizontal span and colored density.
+    V9 is pattern-only, so the detector keeps approximate candle body, upper wick,
+    lower wick, open and close positions. These are visual estimates from pixels,
+    not broker OHLC values.
     """
     ch, cw, _ = chart.shape
     quality, quality_notes = _quality_score(chart)
@@ -515,8 +515,6 @@ def _detect_candles_in_chart(chart: np.ndarray) -> tuple[list[dict[str, Any]], f
     g = chart[:, :, 1].astype(np.int16)
     b = chart[:, :, 2].astype(np.int16)
 
-    # Tolerant broker-theme masks. The difference checks avoid white/yellow UI text
-    # while keeping anti-aliased/compressed candle pixels on phones.
     red = (r > 100) & ((r - g) > 24) & ((r - b) > 8)
     green = (g > 90) & ((g - r) > 20) & ((g - b) > -28)
     cyan = (g > 105) & (b > 105) & (r < 165) & (((g + b) - 2 * r) > 45)
@@ -538,20 +536,57 @@ def _detect_candles_in_chart(chart: np.ndarray) -> tuple[list[dict[str, Any]], f
         ys, _ = np.where(block)
         if len(ys) < 5:
             continue
-        height = int(ys.max() - ys.min() + 1)
+        top, bottom = int(ys.min()), int(ys.max())
+        height = int(bottom - top + 1)
         if height < 3 or height > int(ch * 0.72):
             continue
+
         red_count = int(red[:, left:right + 1].sum())
         bull_count = int(bull[:, left:right + 1].sum())
         direction = 1 if bull_count >= red_count else -1
+
+        # Estimate body from rows that contain a wider run of candle-colour pixels.
+        row_counts = block.sum(axis=1).astype(np.int32)
+        max_row = int(row_counts.max()) if row_counts.size else 0
+        if max_row >= 2:
+            body_thr = max(2, int(math.ceil(max_row * 0.55)))
+            body_rows = np.where(row_counts >= body_thr)[0]
+        else:
+            body_rows = np.array([], dtype=int)
+
+        if body_rows.size:
+            body_top, body_bottom = int(body_rows.min()), int(body_rows.max())
+        else:
+            # Very thin/compressed candle: keep a conservative small central body.
+            mid = int(round(float(np.median(ys))))
+            half = max(1, int(round(height * 0.14)))
+            body_top = max(top, mid - half)
+            body_bottom = min(bottom, mid + half)
+
+        body_height = max(1, body_bottom - body_top + 1)
+        upper_wick = max(0, body_top - top)
+        lower_wick = max(0, bottom - body_bottom)
+        range_px = float(max(1, height))
+        body_ratio = float(body_height / range_px)
+        open_y = float(body_bottom if direction > 0 else body_top)
+        close_y = float(body_top if direction > 0 else body_bottom)
+
         candles.append({
             "x": float((left + right) / 2.0),
-            "y": float(np.median(ys)),
-            "top": int(ys.min()),
-            "bottom": int(ys.max()),
+            "y": float((body_top + body_bottom) / 2.0),
+            "top": top,
+            "bottom": bottom,
+            "body_top": body_top,
+            "body_bottom": body_bottom,
+            "body_height": float(body_height),
+            "upper_wick": float(upper_wick),
+            "lower_wick": float(lower_wick),
+            "body_ratio": body_ratio,
+            "open_y": open_y,
+            "close_y": close_y,
             "dir": direction,
             "pixels": int(len(ys)),
-            "range": float(height),
+            "range": range_px,
         })
 
     merged: list[dict[str, Any]] = []
@@ -559,14 +594,13 @@ def _detect_candles_in_chart(chart: np.ndarray) -> tuple[list[dict[str, Any]], f
     for c in candles:
         if merged and abs(c["x"] - merged[-1]["x"]) <= merge_gap:
             prev = merged[-1]
-            total = prev["pixels"] + c["pixels"]
-            prev["y"] = (prev["y"] * prev["pixels"] + c["y"] * c["pixels"]) / max(total, 1)
-            prev["x"] = (prev["x"] + c["x"]) / 2
-            prev["top"] = min(prev["top"], c["top"])
-            prev["bottom"] = max(prev["bottom"], c["bottom"])
-            prev["range"] = float(prev["bottom"] - prev["top"] + 1)
-            prev["dir"] = c["dir"] if c["pixels"] > prev["pixels"] else prev["dir"]
-            prev["pixels"] = total
+            # Keep the stronger/larger component when UI anti-aliasing splits one candle.
+            if c["pixels"] > prev["pixels"]:
+                merged[-1] = dict(c)
+            else:
+                prev["top"] = min(prev["top"], c["top"])
+                prev["bottom"] = max(prev["bottom"], c["bottom"])
+                prev["range"] = float(prev["bottom"] - prev["top"] + 1)
         else:
             merged.append(dict(c))
 
@@ -609,6 +643,12 @@ def _candidate_chart_regions(arr: np.ndarray) -> list[tuple[str, np.ndarray]]:
     return out
 
 def analyze_chart_image(raw: bytes) -> dict[str, Any]:
+    """V9 pure price-action/pattern scan from a chart image.
+
+    No RSI, EMA, MACD, stochastic, Bollinger or other indicator values are used.
+    The engine evaluates visible candle geometry and a small set of chart-pattern
+    contexts. A weak/conflicting setup returns NO TRADE.
+    """
     try:
         image = Image.open(io.BytesIO(raw))
         image = ImageOps.exif_transpose(image).convert("RGB")
@@ -619,409 +659,281 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
     if w0 < 240 or h0 < 180:
         raise ValueError("Image is too small. Use a clearer chart screenshot.")
 
-    # Keep more detail on portrait/mobile screenshots; candle bodies can become only
-    # a few pixels wide after browser/share-sheet compression.
     max_dim = 1800.0 if h0 > w0 * 1.12 else 1600.0
     scale = min(1.0, max_dim / max(w0, h0))
     if scale < 1.0:
-        image = image.resize(
-            (max(1, int(w0 * scale)), max(1, int(h0 * scale))),
-            Image.Resampling.LANCZOS,
-        )
-
+        image = image.resize((max(1, int(w0 * scale)), max(1, int(h0 * scale))), Image.Resampling.LANCZOS)
     arr = np.asarray(image, dtype=np.uint8)
 
-    # Adaptive crop selection fixes the common mobile failure where a fixed desktop
-    # crop misses the broker chart and returns 0 candles. Test several plausible
-    # chart windows, then select the one with the strongest candle structure.
-    best_region: tuple[str, np.ndarray, list[dict[str, Any]], float, list[str], float, float] | None = None
+    best_region = None
     best_region_score = -1e9
     for crop_name, candidate in _candidate_chart_regions(arr):
         cands, q, qnotes, span, density = _detect_candles_in_chart(candidate)
-        count_score = min(len(cands), 60) * 3.0
-        span_score = min(1.0, span / 0.55) * 34.0
-        density_score = min(18.0, density * 900.0)
-        quality_score = q * 0.16
-        sparse_penalty = 22.0 if len(cands) < 6 else 0.0
-        score = count_score + span_score + density_score + quality_score - sparse_penalty
+        score = min(len(cands), 60) * 3.2 + min(1.0, span / 0.55) * 34.0 + min(18.0, density * 900.0) + q * 0.16
+        if len(cands) < 6:
+            score -= 22.0
         if score > best_region_score:
             best_region_score = score
-            best_region = (crop_name, candidate, cands, q, qnotes, span, density)
+            best_region = (crop_name, candidate, cands, q, qnotes)
 
     if best_region is None:
-        chart = arr
+        crop_name, chart = "full-image", arr
         candles, quality, quality_notes, _, _ = _detect_candles_in_chart(chart)
-        crop_name = "full-image"
     else:
-        crop_name, chart, candles, quality, quality_notes, _, _ = best_region
+        crop_name, chart, candles, quality, quality_notes = best_region
 
     ch, cw, _ = chart.shape
-
-    reasons: list[str] = []
-    warnings = list(quality_notes)
     count = len(candles)
+    warnings = list(quality_notes)
+    reasons: list[str] = []
 
-    empty_strategy = {
-        "selected_strategy": "NO CLEAN STRATEGY",
-        "strategy_direction": "NONE",
-        "strategy_score": 0.0,
-        "confluence_count": 0,
-        "setup_quality": "LOW",
-        "strategy_signals": [],
-    }
-
-    if count < 6:
-        warnings.append("Not enough colored candle structure was detected. Crop closer to the candle chart or select the correct broker theme.")
+    def legacy_aliases(pattern: str, direction: str, score: float, signals: list[dict[str, Any]], library: str, size: int) -> dict[str, Any]:
+        # Keep old field names so the V8 history/timer code continues to work.
         return {
-            "bias": "NO TRADE",
-            "confidence": 0.0,
-            "image_quality_score": quality,
-            "detected_candles": count,
-            "visual_trend": "UNREADABLE",
-            "momentum": "UNREADABLE",
-            "volatility": "UNKNOWN",
-            "reasons": ["Insufficient readable candle structure for a directional setup."],
-            "warnings": warnings,
-            **empty_strategy,
-            "indicator_status": {
-                "Trend / EMA structure": "Not enough readable candle structure",
-                "Momentum / RSI proxy": "Not enough readable candle structure",
-                "MACD-style momentum": "Not enough readable candle structure",
-                "Bollinger-style volatility": "Not enough readable candle structure",
-                "Support / Resistance": "Not enough readable candle structure",
-                "Price Action": "Visual scan attempted",
-            },
-            "strategy_library": "Classic TA 15-Setup Library",
-            "strategy_library_size": 15,
-            "engine": "RAJA Classic TA Strategy Engine V4 · Mobile Adaptive · V7",
-            "analysis_crop_mode": crop_name,
+            "selected_strategy": pattern,
+            "strategy_direction": direction,
+            "strategy_score": score,
+            "strategy_signals": signals,
+            "strategy_library": library,
+            "strategy_library_size": size,
         }
 
-    xs = np.array([c["x"] for c in candles], dtype=float)
+    if count < 6:
+        warnings.append("Not enough candle structure was detected. Move closer to the chart and keep candles sharp.")
+        library = "Candlestick + Price Action Pattern Library V9"
+        return {
+            "bias": "NO TRADE", "confidence": 0.0, "image_quality_score": quality,
+            "detected_candles": count, "visual_trend": "UNREADABLE", "momentum": "UNREADABLE", "volatility": "UNKNOWN",
+            "selected_pattern": "NO CLEAN PATTERN", "pattern_direction": "NONE", "pattern_score": 0.0,
+            "pattern_signals": [], "pattern_library": library, "pattern_library_size": 29,
+            "confluence_count": 0, "setup_quality": "LOW",
+            "reasons": ["Insufficient readable candle structure for pattern recognition."], "warnings": warnings,
+            "pattern_status": {"Candle geometry": "Unreadable", "Pattern context": "Unreadable"},
+            "engine": "RAJA Pattern-Only Engine V9 · V8 Scan Gate", "analysis_crop_mode": crop_name,
+            **legacy_aliases("NO CLEAN PATTERN", "NONE", 0.0, [], library, 29),
+        }
+
     ys = np.array([c["y"] for c in candles], dtype=float)
     dirs = np.array([c["dir"] for c in candles], dtype=float)
     ranges = np.array([c["range"] for c in candles], dtype=float)
 
-    if np.ptp(xs) <= 1:
-        slope = 0.0
-    else:
-        xnorm = (xs - xs.min()) / np.ptp(xs)
-        ynorm = ys / max(ch, 1)
-        slope = float(np.polyfit(xnorm, ynorm, 1)[0])
+    def trend_before(end_idx: int, lookback: int = 7) -> float:
+        start = max(0, end_idx - lookback)
+        seq = candles[start:end_idx]
+        if len(seq) < 3:
+            return 0.0
+        yv = np.array([c["y"] for c in seq], dtype=float) / max(ch, 1)
+        xv = np.arange(len(seq), dtype=float)
+        slope = float(np.polyfit(xv, yv, 1)[0]) if len(seq) > 1 else 0.0
+        # Positive means bullish/uptrend; screen Y falls when price rises.
+        return float(np.clip(-slope * 18.0, -1.0, 1.0))
 
-    # y decreases when price moves higher on screen.
-    trend_strength = float(np.clip(-slope * 4.6, -1.0, 1.0))
+    def body_contains(a: dict[str, Any], b: dict[str, Any], tol: float = 2.0) -> bool:
+        return a["body_top"] <= b["body_top"] + tol and a["body_bottom"] >= b["body_bottom"] - tol
 
-    n_recent = max(3, min(7, count // 3))
-    recent_y = float(np.mean(ys[-n_recent:]))
-    prior_slice = ys[-2 * n_recent:-n_recent] if count >= 2 * n_recent else ys[:max(1, count - n_recent)]
-    prior_y = float(np.mean(prior_slice)) if len(prior_slice) else recent_y
-    recent_strength = float(np.clip((prior_y - recent_y) / max(ch * 0.075, 1.0), -1.0, 1.0))
+    def small_body(c: dict[str, Any]) -> float:
+        return float(np.clip((0.38 - c["body_ratio"]) / 0.30, 0.0, 1.0))
 
-    recent_dirs = dirs[-min(12, count):]
-    color_strength = float(np.mean(recent_dirs)) if len(recent_dirs) else 0.0
-    last3_color = float(np.mean(dirs[-min(3, count):]))
-
-    diffs = np.diff(ys[-min(24, count):]) if count > 1 else np.array([0.0])
-    vol = float(np.std(diffs) / max(ch, 1))
-    if vol < 0.010:
-        volatility = "LOW"
-    elif vol < 0.032:
-        volatility = "NORMAL"
-    else:
-        volatility = "HIGH"
-
-    trend_label = "BULLISH" if trend_strength > 0.14 else "BEARISH" if trend_strength < -0.14 else "SIDEWAYS"
-    momentum_label = "UP" if recent_strength > 0.12 else "DOWN" if recent_strength < -0.12 else "MIXED"
-
-    # ---------------- Classic TA / book-inspired strategy engine V4 ----------------
-    # This library translates classical technical-analysis ideas into visual proxies.
-    # It does NOT fabricate exact EMA/RSI/MACD values from screenshots and it does not
-    # promise a winning trade. Each setup contributes only when its visible structure
-    # is strong enough, then the conservative confluence gate can still return NO TRADE.
     signals: list[dict[str, Any]] = []
-
-    def add_signal(name: str, direction: int, score: float, why: str) -> None:
+    def add_pattern(name: str, direction: int, score: float, why: str, family: str = "Candlestick") -> None:
         score = float(np.clip(score, 0.0, 1.0))
-        if score < 0.34:
+        if score < 0.46:
             return
-        signals.append({
-            "name": name,
-            "direction": "UP" if direction > 0 else "DOWN",
-            "score": round(score * 100.0, 1),
-            "why": why,
-        })
+        signals.append({"name": name, "direction": "UP" if direction > 0 else "DOWN", "score": round(score * 100.0, 1), "why": why, "family": family})
 
-    # Shared range context used by several chart-pattern strategies.
-    base_n = min(max(8, count - 4), count)
-    base = ys[-base_n:-3] if count >= 9 else ys[:-2]
-    prev_high_y = float(np.min(base)) if len(base) >= 4 else float(np.min(ys[:-1]))
-    prev_low_y = float(np.max(base)) if len(base) >= 4 else float(np.max(ys[:-1]))
-    prior_span = max(prev_low_y - prev_high_y, ch * 0.04)
-    buffer_px = max(2.0, ch * 0.008)
-    last_mean = float(np.mean(ys[-2:]))
-    near_res = 1.0 - min(1.0, abs(float(ys[-2]) - prev_high_y) / max(prior_span * 0.22, 1.0))
-    near_sup = 1.0 - min(1.0, abs(float(ys[-2]) - prev_low_y) / max(prior_span * 0.22, 1.0))
+    # ---------- Single-candle patterns from the newest candle ----------
+    c = candles[-1]
+    ctx = trend_before(len(candles) - 1)
+    rng = max(c["range"], 1.0)
+    body = max(c["body_height"], 1.0)
+    upper_r = c["upper_wick"] / rng
+    lower_r = c["lower_wick"] / rng
+    body_r = c["body_ratio"]
+    doji = body_r <= 0.24
 
-    # 1) Trend Continuation — classical trend-following alignment.
-    up_cont = max(0.0, trend_strength) * 0.44 + max(0.0, recent_strength) * 0.34 + max(0.0, color_strength) * 0.22
-    dn_cont = max(0.0, -trend_strength) * 0.44 + max(0.0, -recent_strength) * 0.34 + max(0.0, -color_strength) * 0.22
-    add_signal("Trend Continuation", 1, up_cont, "Uptrend, recent displacement and bullish candle colour are aligned.")
-    add_signal("Trend Continuation", -1, dn_cont, "Downtrend, recent displacement and bearish candle colour are aligned.")
+    hammer_shape = min(1.0, lower_r / 0.52) * 0.50 + min(1.0, max(0.0, 0.46 - body_r) / 0.34) * 0.24 + min(1.0, max(0.0, 0.24 - upper_r) / 0.24) * 0.12
+    upper_pin_shape = min(1.0, upper_r / 0.52) * 0.50 + min(1.0, max(0.0, 0.46 - body_r) / 0.34) * 0.24 + min(1.0, max(0.0, 0.24 - lower_r) / 0.24) * 0.12
+    add_pattern("Hammer", 1, hammer_shape + max(0.0, -ctx) * 0.14, "Long lower wick with a small body after bearish/downward context.")
+    add_pattern("Hanging Man", -1, hammer_shape + max(0.0, ctx) * 0.14, "Hammer-like candle appears after bullish/upward context, warning of rejection.")
+    add_pattern("Inverted Hammer", 1, upper_pin_shape + max(0.0, -ctx) * 0.14, "Long upper wick and small body after bearish/downward context.")
+    add_pattern("Shooting Star", -1, upper_pin_shape + max(0.0, ctx) * 0.14, "Long upper wick and small body after bullish/upward context.")
 
-    # 2) Pullback Continuation — trend, counter-move, then resumption.
-    if count >= 6:
-        pre = float(np.mean(dirs[-5:-2]))
-        resume = float(np.mean(dirs[-2:]))
-        up_pull = max(0.0, trend_strength) * 0.48 + max(0.0, -pre) * 0.22 + max(0.0, resume) * 0.30
-        dn_pull = max(0.0, -trend_strength) * 0.48 + max(0.0, pre) * 0.22 + max(0.0, -resume) * 0.30
-        add_signal("Pullback Continuation", 1, up_pull, "Bullish structure shows a counter-move followed by renewed buying candles.")
-        add_signal("Pullback Continuation", -1, dn_pull, "Bearish structure shows a counter-move followed by renewed selling candles.")
+    if doji:
+        dragon = min(1.0, lower_r / 0.60) * 0.62 + min(1.0, max(0.0, 0.20 - upper_r) / 0.20) * 0.18 + max(0.0, -ctx) * 0.20
+        grave = min(1.0, upper_r / 0.60) * 0.62 + min(1.0, max(0.0, 0.20 - lower_r) / 0.20) * 0.18 + max(0.0, ctx) * 0.20
+        add_pattern("Dragonfly Doji", 1, dragon, "Doji-like body with dominant lower wick near bearish/downward context.")
+        add_pattern("Gravestone Doji", -1, grave, "Doji-like body with dominant upper wick near bullish/upward context.")
 
-    # 3) Micro Trend Structure — recent higher/lower candle path agrees with direction.
-    if count >= 8:
-        micro_now = float(np.mean(ys[-3:]))
-        micro_prev = float(np.mean(ys[-7:-3]))
-        micro_shift = float(np.clip((micro_prev - micro_now) / max(ch * 0.055, 1.0), -1.0, 1.0))
-        up_micro = max(0.0, micro_shift) * 0.58 + max(0.0, last3_color) * 0.42
-        dn_micro = max(0.0, -micro_shift) * 0.58 + max(0.0, -last3_color) * 0.42
-        add_signal("Micro Trend Structure", 1, up_micro, "The latest candle cluster is stepping higher with bullish colour confirmation.")
-        add_signal("Micro Trend Structure", -1, dn_micro, "The latest candle cluster is stepping lower with bearish colour confirmation.")
+    # ---------- Two-candle patterns ----------
+    if count >= 2:
+        a, b = candles[-2], candles[-1]
+        ctx2 = trend_before(len(candles) - 2)
+        tol = max(2.0, float(np.median(ranges[-min(count, 20):])) * 0.10)
+        engulf = body_contains(b, a, tol)
+        harami = body_contains(a, b, tol) and b["body_height"] <= a["body_height"] * 0.82
+        size_edge = min(1.0, b["body_height"] / max(a["body_height"], 1.0) / 1.25)
 
-    # 4) Range Breakout — newest candles push outside the preceding visible range.
-    if len(base) >= 4:
-        up_distance = max(0.0, (prev_high_y - last_mean - buffer_px) / max(ch * 0.045, 1.0))
-        dn_distance = max(0.0, (last_mean - prev_low_y - buffer_px) / max(ch * 0.045, 1.0))
-        up_break = min(1.0, up_distance) * 0.62 + max(0.0, last3_color) * 0.38
-        dn_break = min(1.0, dn_distance) * 0.62 + max(0.0, -last3_color) * 0.38
-        add_signal("Range Breakout", 1, up_break, "Recent candles are pushing above the preceding visible price range.")
-        add_signal("Range Breakout", -1, dn_break, "Recent candles are pushing below the preceding visible price range.")
+        if a["dir"] < 0 and b["dir"] > 0:
+            add_pattern("Bullish Engulfing", 1, (0.58 if engulf else 0.0) + size_edge * 0.22 + max(0.0, -ctx2) * 0.20, "Bullish body visually engulfs the preceding bearish body.")
+            add_pattern("Bullish Harami", 1, (0.62 if harami else 0.0) + max(0.0, -ctx2) * 0.22 + small_body(b) * 0.16, "Small bullish body sits inside a larger bearish body after downward context.")
+            midpoint = (a["body_top"] + a["body_bottom"]) / 2.0
+            piercing_depth = float(np.clip((midpoint - b["close_y"]) / max(a["body_height"] * 0.50, 1.0), 0.0, 1.0))
+            add_pattern("Piercing Line", 1, piercing_depth * 0.62 + max(0.0, -ctx2) * 0.22 + min(1.0, b["body_ratio"] / 0.55) * 0.16, "Bullish candle closes deeply into the preceding bearish body.")
+        if a["dir"] > 0 and b["dir"] < 0:
+            add_pattern("Bearish Engulfing", -1, (0.58 if engulf else 0.0) + size_edge * 0.22 + max(0.0, ctx2) * 0.20, "Bearish body visually engulfs the preceding bullish body.")
+            add_pattern("Bearish Harami", -1, (0.62 if harami else 0.0) + max(0.0, ctx2) * 0.22 + small_body(b) * 0.16, "Small bearish body sits inside a larger bullish body after upward context.")
+            midpoint = (a["body_top"] + a["body_bottom"]) / 2.0
+            cloud_depth = float(np.clip((b["close_y"] - midpoint) / max(a["body_height"] * 0.50, 1.0), 0.0, 1.0))
+            add_pattern("Dark Cloud Cover", -1, cloud_depth * 0.62 + max(0.0, ctx2) * 0.22 + min(1.0, b["body_ratio"] / 0.55) * 0.16, "Bearish candle closes deeply into the preceding bullish body.")
 
-        # 5) Breakout Retest — a recent breach returns to the boundary and resumes.
-        if count >= 7:
-            recent4 = ys[-4:]
-            breached_up = float(np.min(recent4[:-1])) < (prev_high_y - buffer_px)
-            breached_dn = float(np.max(recent4[:-1])) > (prev_low_y + buffer_px)
-            retest_res = 1.0 - min(1.0, abs(float(ys[-1]) - prev_high_y) / max(prior_span * 0.18, 1.0))
-            retest_sup = 1.0 - min(1.0, abs(float(ys[-1]) - prev_low_y) / max(prior_span * 0.18, 1.0))
-            up_retest = (0.46 if breached_up else 0.0) + max(0.0, retest_res) * 0.28 + max(0.0, dirs[-1]) * 0.26
-            dn_retest = (0.46 if breached_dn else 0.0) + max(0.0, retest_sup) * 0.28 + max(0.0, -dirs[-1]) * 0.26
-            add_signal("Breakout Retest", 1, up_retest, "A recent upside break is retesting the old boundary with bullish response.")
-            add_signal("Breakout Retest", -1, dn_retest, "A recent downside break is retesting the old boundary with bearish response.")
+        bottom_tol = max(3.0, float(np.median(ranges[-min(20, count):])) * 0.14)
+        if a["dir"] < 0 and b["dir"] > 0 and abs(a["bottom"] - b["bottom"]) <= bottom_tol:
+            add_pattern("Tweezer Bottom", 1, 0.60 + max(0.0, -ctx2) * 0.25 + min(0.15, b["lower_wick"] / max(b["range"], 1.0) * 0.25), "Two recent candles reject a similar visual low.")
+        if a["dir"] > 0 and b["dir"] < 0 and abs(a["top"] - b["top"]) <= bottom_tol:
+            add_pattern("Tweezer Top", -1, 0.60 + max(0.0, ctx2) * 0.25 + min(0.15, b["upper_wick"] / max(b["range"], 1.0) * 0.25), "Two recent candles reject a similar visual high.")
 
-        # 6) Support Rejection.
-        up_reject = max(0.0, near_sup) * 0.48 + max(0.0, dirs[-1]) * 0.30 + max(0.0, recent_strength) * 0.22
-        add_signal("Support Rejection", 1, up_reject, "Price tested a recent visual low/support area and bullish candles reacted.")
+    # ---------- Three-candle patterns ----------
+    if count >= 3:
+        a, b, c3 = candles[-3], candles[-2], candles[-1]
+        ctx3 = trend_before(len(candles) - 3)
+        mid_a = (a["body_top"] + a["body_bottom"]) / 2.0
+        morning = a["dir"] < 0 and small_body(b) > 0.35 and c3["dir"] > 0 and c3["close_y"] < mid_a
+        evening = a["dir"] > 0 and small_body(b) > 0.35 and c3["dir"] < 0 and c3["close_y"] > mid_a
+        add_pattern("Morning Doji Star" if b["body_ratio"] <= 0.24 else "Morning Star", 1, (0.66 if morning else 0.0) + max(0.0, -ctx3) * 0.22 + min(0.12, c3["body_ratio"] * 0.18), "Bearish move pauses with a small middle candle, then a strong bullish response.")
+        add_pattern("Evening Doji Star" if b["body_ratio"] <= 0.24 else "Evening Star", -1, (0.66 if evening else 0.0) + max(0.0, ctx3) * 0.22 + min(0.12, c3["body_ratio"] * 0.18), "Bullish move pauses with a small middle candle, then a strong bearish response.")
 
-        # 7) Resistance Rejection.
-        dn_reject = max(0.0, near_res) * 0.48 + max(0.0, -dirs[-1]) * 0.30 + max(0.0, -recent_strength) * 0.22
-        add_signal("Resistance Rejection", -1, dn_reject, "Price tested a recent visual high/resistance area and bearish candles reacted.")
+        if all(x["dir"] > 0 for x in (a,b,c3)):
+            closes = [a["close_y"], b["close_y"], c3["close_y"]]
+            progressive = closes[2] < closes[1] < closes[0]
+            score = (0.64 if progressive else 0.48) + min(0.20, float(np.mean([a["body_ratio"],b["body_ratio"],c3["body_ratio"]])) * 0.25) + max(0.0, -ctx3) * 0.12
+            add_pattern("Three White Soldiers", 1, score, "Three bullish candles advance progressively higher.")
+        if all(x["dir"] < 0 for x in (a,b,c3)):
+            closes = [a["close_y"], b["close_y"], c3["close_y"]]
+            progressive = closes[2] > closes[1] > closes[0]
+            score = (0.64 if progressive else 0.48) + min(0.20, float(np.mean([a["body_ratio"],b["body_ratio"],c3["body_ratio"]])) * 0.25) + max(0.0, ctx3) * 0.12
+            add_pattern("Three Black Crows", -1, score, "Three bearish candles advance progressively lower.")
 
-        # 8) Range Rejection — mean-reversion only when broader trend is weak.
-        if abs(trend_strength) < 0.22:
-            side_bonus = max(0.0, 1.0 - abs(trend_strength) / 0.22)
-            up_range = up_reject * 0.70 + side_bonus * 0.30
-            dn_range = dn_reject * 0.70 + side_bonus * 0.30
-            add_signal("Range Rejection", 1, up_range, "Sideways structure rejected a recent lower boundary.")
-            add_signal("Range Rejection", -1, dn_range, "Sideways structure rejected a recent upper boundary.")
+        tol = max(2.0, float(np.median(ranges[-min(count, 20):])) * 0.10)
+        first_inside = body_contains(a, b, tol) and b["body_height"] < a["body_height"]
+        first_engulf = body_contains(b, a, tol)
+        if a["dir"] < 0 and b["dir"] > 0 and first_inside and c3["dir"] > 0 and c3["close_y"] < b["close_y"]:
+            add_pattern("Three Inside Up", 1, 0.74 + max(0.0, -ctx3) * 0.18, "Bullish harami-style inside setup receives a third-candle upside confirmation.")
+        if a["dir"] > 0 and b["dir"] < 0 and first_inside and c3["dir"] < 0 and c3["close_y"] > b["close_y"]:
+            add_pattern("Three Inside Down", -1, 0.74 + max(0.0, ctx3) * 0.18, "Bearish harami-style inside setup receives a third-candle downside confirmation.")
+        if a["dir"] < 0 and b["dir"] > 0 and first_engulf and c3["dir"] > 0 and c3["close_y"] < b["close_y"]:
+            add_pattern("Three Outside Up", 1, 0.76 + max(0.0, -ctx3) * 0.16, "Bullish engulfing setup receives a third-candle upside confirmation.")
+        if a["dir"] > 0 and b["dir"] < 0 and first_engulf and c3["dir"] < 0 and c3["close_y"] > b["close_y"]:
+            add_pattern("Three Outside Down", -1, 0.76 + max(0.0, ctx3) * 0.16, "Bearish engulfing setup receives a third-candle downside confirmation.")
 
-        # 9) Failed Breakout Reversal — breach then quick return inside the range.
-        if count >= 5:
-            penult_y = float(ys[-2])
-            last_y = float(ys[-1])
-            failed_up = penult_y < (prev_high_y - buffer_px) and last_y >= prev_high_y and dirs[-1] < 0
-            failed_dn = penult_y > (prev_low_y + buffer_px) and last_y <= prev_low_y and dirs[-1] > 0
-            fail_up_score = (0.66 if failed_up else 0.0) + max(0.0, -dirs[-1]) * 0.16 + max(0.0, -recent_strength) * 0.18
-            fail_dn_score = (0.66 if failed_dn else 0.0) + max(0.0, dirs[-1]) * 0.16 + max(0.0, recent_strength) * 0.18
-            add_signal("Failed Breakout Reversal", -1, fail_up_score, "Price briefly broke above resistance but returned inside with bearish rejection.")
-            add_signal("Failed Breakout Reversal", 1, fail_dn_score, "Price briefly broke below support but returned inside with bullish rejection.")
-
-        # 10) Double-Test Reversal — two touches near an edge plus latest rejection.
-        look = ys[-min(18, count):]
-        tol = max(prior_span * 0.12, ch * 0.012)
-        support_touches = int(np.sum(np.abs(look - prev_low_y) <= tol))
-        resist_touches = int(np.sum(np.abs(look - prev_high_y) <= tol))
-        up_double = min(1.0, support_touches / 3.0) * 0.50 + max(0.0, near_sup) * 0.24 + max(0.0, dirs[-1]) * 0.26
-        dn_double = min(1.0, resist_touches / 3.0) * 0.50 + max(0.0, near_res) * 0.24 + max(0.0, -dirs[-1]) * 0.26
-        add_signal("Double-Test Reversal", 1, up_double, "The lower boundary has been tested repeatedly and the latest candle reacts upward.")
-        add_signal("Double-Test Reversal", -1, dn_double, "The upper boundary has been tested repeatedly and the latest candle reacts downward.")
-
-    # 11) Momentum Burst — recent displacement expands versus prior movement.
+    # ---------- Price-action / chart context patterns from the uploaded guides ----------
     if count >= 10:
-        prior_move = float(np.mean(np.abs(np.diff(ys[-10:-4])))) + 1e-6
-        recent_move = float(np.mean(np.abs(np.diff(ys[-4:]))))
-        expansion = float(np.clip((recent_move / prior_move - 0.9) / 1.3, 0.0, 1.0))
-        up_mom = expansion * 0.42 + max(0.0, recent_strength) * 0.36 + max(0.0, last3_color) * 0.22
-        dn_mom = expansion * 0.42 + max(0.0, -recent_strength) * 0.36 + max(0.0, -last3_color) * 0.22
-        add_signal("Momentum Burst", 1, up_mom, "Recent bullish displacement has expanded versus the preceding candles.")
-        add_signal("Momentum Burst", -1, dn_mom, "Recent bearish displacement has expanded versus the preceding candles.")
+        prior = candles[-12:-2] if count >= 12 else candles[:-2]
+        if len(prior) >= 5:
+            resistance_y = float(min(x["top"] for x in prior))
+            support_y = float(max(x["bottom"] for x in prior))
+            span = max(10.0, support_y - resistance_y)
+            last = candles[-1]
+            near_support = 1.0 - min(1.0, abs(last["bottom"] - support_y) / max(span * 0.16, 2.0))
+            near_resistance = 1.0 - min(1.0, abs(last["top"] - resistance_y) / max(span * 0.16, 2.0))
+            wick_low = min(1.0, last["lower_wick"] / max(last["body_height"] * 1.6, 1.0))
+            wick_high = min(1.0, last["upper_wick"] / max(last["body_height"] * 1.6, 1.0))
+            add_pattern("Support Rejection", 1, near_support * 0.46 + wick_low * 0.34 + (0.20 if last["dir"] > 0 else 0.0), "Newest candle rejects a recent visual support area.", "Price Action")
+            add_pattern("Resistance Rejection", -1, near_resistance * 0.46 + wick_high * 0.34 + (0.20 if last["dir"] < 0 else 0.0), "Newest candle rejects a recent visual resistance area.", "Price Action")
 
-    # 12) Three-Candle Drive — three same-direction candles with directional path.
-    if count >= 4:
-        same_up = float(np.mean(dirs[-3:])) >= 0.66
-        same_dn = float(np.mean(dirs[-3:])) <= -0.66
-        path_up = ys[-1] < ys[-2] < ys[-3]
-        path_dn = ys[-1] > ys[-2] > ys[-3]
-        up_drive = (0.52 if same_up else 0.0) + (0.28 if path_up else 0.0) + max(0.0, recent_strength) * 0.20
-        dn_drive = (0.52 if same_dn else 0.0) + (0.28 if path_dn else 0.0) + max(0.0, -recent_strength) * 0.20
-        add_signal("Three-Candle Drive", 1, up_drive, "Three recent candles show a compact bullish drive with a rising visual path.")
-        add_signal("Three-Candle Drive", -1, dn_drive, "Three recent candles show a compact bearish drive with a falling visual path.")
+            # Breakout + retest: previous candle breaches the old boundary, latest returns near it and responds.
+            prev = candles[-2]
+            buffer_px = max(2.0, span * 0.05)
+            up_breach = prev["close_y"] < resistance_y - buffer_px
+            dn_breach = prev["close_y"] > support_y + buffer_px
+            retest_res = 1.0 - min(1.0, abs(last["y"] - resistance_y) / max(span * 0.18, 2.0))
+            retest_sup = 1.0 - min(1.0, abs(last["y"] - support_y) / max(span * 0.18, 2.0))
+            add_pattern("Breakout & Retest", 1, (0.52 if up_breach else 0.0) + retest_res * 0.28 + (0.20 if last["dir"] > 0 else 0.0), "Upside breakout is followed by a visual retest/hold of the old resistance area.", "Chart Pattern")
+            add_pattern("Breakout & Retest", -1, (0.52 if dn_breach else 0.0) + retest_sup * 0.28 + (0.20 if last["dir"] < 0 else 0.0), "Downside breakout is followed by a visual retest/hold of the old support area.", "Chart Pattern")
 
-    # 13) Compression Breakout — quiet movement followed by directional expansion.
-    if count >= 12:
-        old_steps = np.abs(np.diff(ys[-12:-4]))
-        new_steps = np.abs(np.diff(ys[-4:]))
-        old_mean = float(np.mean(old_steps)) + 1e-6
-        new_mean = float(np.mean(new_steps))
-        release = float(np.clip((new_mean / old_mean - 1.0) / 1.5, 0.0, 1.0))
-        old_quiet = float(np.clip(1.0 - np.std(old_steps) / max(ch * 0.02, 1.0), 0.0, 1.0))
-        up_comp = release * 0.48 + old_quiet * 0.18 + max(0.0, recent_strength) * 0.20 + max(0.0, last3_color) * 0.14
-        dn_comp = release * 0.48 + old_quiet * 0.18 + max(0.0, -recent_strength) * 0.20 + max(0.0, -last3_color) * 0.14
-        add_signal("Compression Breakout", 1, up_comp, "A quieter candle cluster is releasing into stronger bullish displacement.")
-        add_signal("Compression Breakout", -1, dn_comp, "A quieter candle cluster is releasing into stronger bearish displacement.")
+            # Double top/bottom approximation using repeated extremes in the latest window.
+            recent = candles[-16:] if count >= 16 else candles
+            sep = 3
+            bottoms = sorted([(float(x["bottom"]), i) for i,x in enumerate(recent)], reverse=True)
+            tops = sorted([(float(x["top"]), i) for i,x in enumerate(recent)])
+            for arr_ext, direction, name in ((bottoms, 1, "Double Bottom"), (tops, -1, "Double Top")):
+                found = None
+                for v1,i1 in arr_ext[:6]:
+                    for v2,i2 in arr_ext[:8]:
+                        if abs(i1-i2) < sep:
+                            continue
+                        if abs(v1-v2) <= max(4.0, span*0.10):
+                            found = (v1,v2,i1,i2); break
+                    if found: break
+                if found:
+                    confirm = 0.18 if (last["dir"] > 0 if direction > 0 else last["dir"] < 0) else 0.0
+                    add_pattern(name, direction, 0.58 + confirm + min(0.16, abs(trend_before(len(candles)-1))*0.16), f"Two separated tests formed near a similar visual {'low' if direction>0 else 'high'} with reversal response.", "Chart Pattern")
 
-    # 14) Exhaustion Reversal — abnormally large prior candle followed by opposite reaction.
-    if count >= 8:
-        med_range = float(np.median(ranges[-min(12, count):])) + 1e-6
-        prior_range_ratio = float(ranges[-2] / med_range)
-        stretch = float(np.clip((prior_range_ratio - 1.35) / 1.25, 0.0, 1.0))
-        prior_dir = float(dirs[-2])
-        last_dir = float(dirs[-1])
-        up_exhaust = stretch * 0.52 + max(0.0, -prior_dir) * 0.18 + max(0.0, last_dir) * 0.30
-        dn_exhaust = stretch * 0.52 + max(0.0, prior_dir) * 0.18 + max(0.0, -last_dir) * 0.30
-        add_signal("Exhaustion Reversal", 1, up_exhaust, "A stretched bearish candle is followed by a bullish reversal response.")
-        add_signal("Exhaustion Reversal", -1, dn_exhaust, "A stretched bullish candle is followed by a bearish reversal response.")
-
-    # 15) Range Rotation — in sideways conditions, movement rotates away from one edge.
-    if len(base) >= 4 and abs(trend_strength) < 0.26:
-        current_pos = float(np.clip((float(ys[-1]) - prev_high_y) / max(prior_span, 1.0), 0.0, 1.0))
-        # y=0 near visual resistance/high, y=1 near support/low.
-        up_rot = max(0.0, current_pos - 0.56) * 1.8 * 0.52 + max(0.0, dirs[-1]) * 0.28 + max(0.0, recent_strength) * 0.20
-        dn_rot = max(0.0, 0.44 - current_pos) * 1.8 * 0.52 + max(0.0, -dirs[-1]) * 0.28 + max(0.0, -recent_strength) * 0.20
-        add_signal("Range Rotation", 1, up_rot, "Sideways price is rotating upward from the lower half of the visible range.")
-        add_signal("Range Rotation", -1, dn_rot, "Sideways price is rotating downward from the upper half of the visible range.")
-
-    # Strategy ranking and directional confluence.
     signals.sort(key=lambda s: float(s["score"]), reverse=True)
     best = signals[0] if signals else None
-    up_scores = [float(s["score"]) / 100.0 for s in signals if s["direction"] == "UP" and float(s["score"]) >= 48.0]
-    dn_scores = [float(s["score"]) / 100.0 for s in signals if s["direction"] == "DOWN" and float(s["score"]) >= 48.0]
-    up_vote = float(sum(up_scores))
-    dn_vote = float(sum(dn_scores))
-    confluence_direction = 1 if up_vote > dn_vote else -1 if dn_vote > up_vote else 0
-    confluence_count = len(up_scores) if confluence_direction > 0 else len(dn_scores) if confluence_direction < 0 else 0
+    best_score = float(best["score"]) if best else 0.0
+    up = [s for s in signals if s["direction"] == "UP" and float(s["score"]) >= 58.0]
+    down = [s for s in signals if s["direction"] == "DOWN" and float(s["score"]) >= 58.0]
+    up_vote = sum(float(s["score"]) for s in up)
+    down_vote = sum(float(s["score"]) for s in down)
+    direction = "UP" if up_vote > down_vote else "DOWN" if down_vote > up_vote else "NONE"
+    same = up if direction == "UP" else down if direction == "DOWN" else []
+    confluence = len(same)
+    opposite = down if direction == "UP" else up if direction == "DOWN" else []
+    strongest_opp = max([float(s["score"]) for s in opposite], default=0.0)
+    conflict = bool(best and strongest_opp >= max(65.0, best_score - 7.0))
 
-    direction_score = 0.48 * trend_strength + 0.30 * recent_strength + 0.14 * color_strength
-    if confluence_direction:
-        vote_edge = (up_vote - dn_vote) / max(up_vote + dn_vote, 1e-6)
-        direction_score += 0.22 * float(np.clip(vote_edge, -1.0, 1.0))
-    direction_score = float(np.clip(direction_score, -1.0, 1.0))
-
-    candle_factor = min(1.0, count / 24.0)
-    quality_factor = max(0.45, quality / 100.0)
-    best_score = (float(best["score"]) / 100.0) if best else 0.0
-    agreement = min(1.0, confluence_count / 3.0)
-    confidence = (
-        46.0
-        + abs(direction_score) * 28.0
-        + best_score * 12.0
-        + agreement * 8.0
-    ) * (0.82 + 0.18 * candle_factor) * (0.86 + 0.14 * quality_factor)
-    confidence = round(max(0.0, min(93.0, confidence)), 1)
-
-    # Explain core market structure.
-    if trend_label == "BULLISH":
-        reasons.append("Visible candle path is sloping upward across the chart region.")
-    elif trend_label == "BEARISH":
-        reasons.append("Visible candle path is sloping downward across the chart region.")
-    else:
-        reasons.append("Visible candle path is mostly sideways / mixed.")
-
-    if momentum_label == "UP":
-        reasons.append("Recent detected candles are positioned higher than the preceding group.")
-    elif momentum_label == "DOWN":
-        reasons.append("Recent detected candles are positioned lower than the preceding group.")
-    else:
-        reasons.append("Recent candle momentum is mixed.")
+    pattern_ok = bool(best and best_score >= 66.0)
+    confluence_ok = confluence >= 2 or best_score >= 84.0
+    structure_ok = count >= 10 and quality >= 45.0
+    no_trade = not (pattern_ok and confluence_ok and structure_ok and not conflict and direction != "NONE")
 
     if best:
-        reasons.append(f"Best visual strategy: {best['name']} ({best['direction']}) at {best['score']:.0f}% setup score.")
-    if confluence_count:
-        reasons.append(f"{confluence_count} strategy confirmations agree on the same direction.")
-
-    # Volatility is a filter, not a standalone direction signal.
-    if volatility == "HIGH":
-        warnings.append("High visual volatility detected; entry quality requires stronger confluence.")
-    if quality < 45:
-        warnings.append("Image quality is below the preferred threshold.")
-
-    # Conservative gate for short-expiry binary-style visual scans:
-    # require a clear strategy, sufficient image/candles, and directional agreement.
-    best_dir = 1 if best and best["direction"] == "UP" else -1 if best and best["direction"] == "DOWN" else 0
-    strategy_ok = bool(best and best_score >= 0.52)
-    direction_agrees = bool(best_dir and np.sign(direction_score) == best_dir)
-    confluence_ok = confluence_count >= 2 or best_score >= 0.72
-    volatility_ok = volatility != "HIGH" or (best_score >= 0.66 and confluence_count >= 2)
-    structure_ok = count >= 8 and quality >= 36 and abs(direction_score) >= 0.16
-
-    no_trade = not (strategy_ok and direction_agrees and confluence_ok and volatility_ok and structure_ok)
+        reasons.append(f"Best pattern: {best['name']} ({best['direction']}) at {best_score:.0f}% visual pattern score.")
+    if confluence:
+        reasons.append(f"{confluence} pattern confirmations agree on {direction}.")
+    if conflict:
+        reasons.append("A strong opposite-direction pattern is also present, so the signal is blocked.")
+    if not pattern_ok:
+        reasons.append("No current pattern reached the minimum pattern threshold.")
+    elif not confluence_ok:
+        reasons.append("The pattern needs another confirmation; waiting is preferred.")
 
     if no_trade:
         bias = "NO TRADE"
-        confidence = round(min(confidence, 68.0), 1)
-        if not strategy_ok:
-            reasons.append("No visual strategy reached the minimum setup threshold.")
-        elif not confluence_ok:
-            reasons.append("Strategy confluence is too weak; waiting is preferred.")
-        elif not direction_agrees:
-            reasons.append("Strategy direction conflicts with the broader candle structure.")
-        elif not volatility_ok:
-            reasons.append("Volatility is too high for the current level of confirmation.")
-        else:
-            reasons.append("The setup does not pass the conservative entry filter.")
+        confidence = min(68.0, round(best_score * 0.72 + quality * 0.10 + min(confluence,3) * 2.0, 1)) if best else 0.0
     else:
-        bias = "UP BIAS" if best_dir > 0 else "DOWN BIAS"
+        bias = "UP BIAS" if direction == "UP" else "DOWN BIAS"
+        confidence = round(min(94.0, 45.0 + best_score * 0.36 + min(confluence,4) * 4.0 + quality * 0.08), 1)
 
-    setup_quality = (
-        "HIGH" if not no_trade and best_score >= 0.72 and confluence_count >= 3 and quality >= 60
-        else "MEDIUM" if not no_trade
-        else "LOW"
-    )
+    setup_quality = "HIGH" if not no_trade and best_score >= 80 and confluence >= 2 and quality >= 65 else "MEDIUM" if not no_trade else "LOW"
+    selected = best["name"] if best else "NO CLEAN PATTERN"
+    selected_dir = best["direction"] if best else "NONE"
+    library = "Candlestick + Price Action Pattern Library V9"
 
-    selected_strategy = best["name"] if best else "NO CLEAN STRATEGY"
-    strategy_direction = best["direction"] if best else "NONE"
-    strategy_score = round(best_score * 100.0, 1)
+    # Context is used only to validate candle patterns; no technical indicator values are calculated.
+    global_ctx = trend_before(len(candles), min(12, count))
+    context_label = "UPWARD" if global_ctx > 0.15 else "DOWNWARD" if global_ctx < -0.15 else "SIDEWAYS/MIXED"
+    if quality < 65:
+        warnings.append("Image is usable but a sharper screenshot/photo would improve candle-pattern geometry.")
 
-    return {
-        "bias": bias,
-        "confidence": confidence,
-        "image_quality_score": quality,
-        "detected_candles": count,
-        "visual_trend": trend_label,
-        "momentum": momentum_label,
-        "volatility": volatility,
-        "direction_score": round(direction_score, 3),
-        "selected_strategy": selected_strategy,
-        "strategy_direction": strategy_direction,
-        "strategy_score": strategy_score,
-        "confluence_count": int(confluence_count),
-        "setup_quality": setup_quality,
-        "strategy_signals": signals[:8],
-        "strategy_library": "Classic TA 15-Setup Library",
-        "strategy_library_size": 15,
-        "reasons": reasons[:8],
-        "warnings": warnings[:5],
-        "indicator_status": {
-            "Trend / EMA structure": f"Visual trend proxy: {trend_label}; exact EMA values require OHLC",
-            "Momentum / RSI proxy": f"Visual momentum proxy: {momentum_label}; exact RSI is not fabricated",
-            "MACD-style momentum": "Directional acceleration is estimated from recent candle displacement",
-            "Bollinger-style volatility": f"Visual volatility regime: {volatility}; exact bands require OHLC",
-            "Support / Resistance": "Recent visual range boundaries and rejection behaviour are evaluated",
-            "Price Action": f"{count} candle-like structures analyzed",
+    pattern_signals = signals[:10]
+    result = {
+        "bias": bias, "confidence": confidence, "image_quality_score": quality, "detected_candles": count,
+        "visual_trend": context_label, "momentum": "PATTERN ONLY", "volatility": "NOT USED",
+        "selected_pattern": selected, "pattern_direction": selected_dir, "pattern_score": round(best_score,1),
+        "pattern_signals": pattern_signals, "pattern_library": library, "pattern_library_size": 29,
+        "confluence_count": int(confluence), "setup_quality": setup_quality,
+        "reasons": reasons[:8], "warnings": warnings[:6],
+        "pattern_status": {
+            "Mode": "Pure candlestick + price-action pattern recognition",
+            "Indicators": "OFF — RSI/EMA/MACD/Stochastic/Bollinger are not used",
+            "Context": f"Visual candle context: {context_label}",
+            "Candle geometry": f"{count} candle-like structures with body/wick estimates",
         },
-        "engine": "RAJA Classic TA Strategy Engine V4 · Mobile Adaptive · V7",
-        "analysis_crop_mode": crop_name,
+        "engine": "RAJA Pattern-Only Engine V9 · V8 Focus + Scan Gate", "analysis_crop_mode": crop_name,
     }
+    result.update(legacy_aliases(selected, selected_dir, round(best_score,1), pattern_signals, library, 29))
+    return result
 
 
 @app.get("/")
@@ -1235,6 +1147,97 @@ def access_status():
     })
 
 
+
+
+MIN_SIGNAL_CANDLES = max(10, min(30, int(os.environ.get("RAJA_SCANNER_MIN_SIGNAL_CANDLES", "14"))))
+MIN_SIGNAL_IMAGE_QUALITY = max(45.0, min(90.0, float(os.environ.get("RAJA_SCANNER_MIN_IMAGE_QUALITY", "65"))))
+
+
+def _rotate_image_bytes(raw: bytes, angle: int) -> bytes:
+    """Rotate the uploaded visual frame for mobile/sideways-photo rescue."""
+    image = Image.open(io.BytesIO(raw))
+    image = ImageOps.exif_transpose(image).convert("RGB")
+    rotated = image.rotate(angle, expand=True)
+    out = io.BytesIO()
+    rotated.save(out, format="JPEG", quality=94, optimize=True)
+    return out.getvalue()
+
+
+def _analysis_candidate_score(result: dict[str, Any]) -> float:
+    candles = float(result.get("detected_candles") or 0)
+    quality = float(result.get("image_quality_score") or 0)
+    strategy = float(result.get("pattern_score") or result.get("strategy_score") or 0)
+    readable = 0.0 if str(result.get("visual_trend") or "").upper() == "UNREADABLE" else 40.0
+    # Candle count dominates because a sharp photo of the wrong/rotated region can still have a high quality score.
+    return candles * 12.0 + quality * 0.6 + strategy * 0.25 + readable
+
+
+def analyze_chart_image_mobile_safe(raw: bytes) -> dict[str, Any]:
+    """Analyze the frame, rescue sideways mobile photos, then apply a strict signal-quality gate."""
+    candidates: list[tuple[int, dict[str, Any]]] = []
+    base = analyze_chart_image(raw)
+    candidates.append((0, base))
+
+    base_candles = int(base.get("detected_candles") or 0)
+    base_trend = str(base.get("visual_trend") or "").upper()
+    # Only spend extra CPU when the original frame is suspicious/too sparse.
+    if base_candles < max(MIN_SIGNAL_CANDLES + 4, 18) or base_trend == "UNREADABLE":
+        for angle in (90, 270):
+            try:
+                candidates.append((angle, analyze_chart_image(_rotate_image_bytes(raw, angle))))
+            except Exception:
+                pass
+        # 180° is less common, so try it only for a very poor original read.
+        if base_candles < 8:
+            try:
+                candidates.append((180, analyze_chart_image(_rotate_image_bytes(raw, 180))))
+            except Exception:
+                pass
+
+    angle, best = max(candidates, key=lambda item: _analysis_candidate_score(item[1]))
+    best = dict(best)
+    best["auto_rotation_degrees"] = int(angle)
+
+    candles = int(best.get("detected_candles") or 0)
+    quality = float(best.get("image_quality_score") or 0)
+    trend = str(best.get("visual_trend") or "").upper()
+    reasons: list[str] = []
+    if candles < MIN_SIGNAL_CANDLES:
+        reasons.append(f"Only {candles} candles were read; at least {MIN_SIGNAL_CANDLES} clear candles are required for an UP/DOWN signal.")
+    if quality < MIN_SIGNAL_IMAGE_QUALITY:
+        reasons.append(f"Image quality {quality:.0f}/100 is below the signal threshold {MIN_SIGNAL_IMAGE_QUALITY:.0f}/100.")
+    if trend == "UNREADABLE":
+        reasons.append("The chart structure is unreadable.")
+
+    rescan_required = bool(reasons)
+    best["rescan_required"] = rescan_required
+    best["scan_gate"] = "RESCAN" if rescan_required else "PASS"
+    best["scan_gate_reason"] = " ".join(reasons) if reasons else "Frame has enough readable candles and image quality."
+
+    if rescan_required:
+        # Never emit directional trading guidance from a poor/mobile-misaligned frame.
+        best["raw_bias_before_scan_gate"] = best.get("bias")
+        best["bias"] = "NO TRADE"
+        best["confidence"] = 0.0
+        best["selected_strategy"] = "RESCAN REQUIRED"
+        best["selected_pattern"] = "RESCAN REQUIRED"
+        best["strategy_direction"] = "NONE"
+        best["pattern_direction"] = "NONE"
+        best["strategy_score"] = 0.0
+        best["pattern_score"] = 0.0
+        best["confluence_count"] = 0
+        best["setup_quality"] = "LOW"
+        warnings = list(best.get("warnings") or [])
+        warnings.insert(0, "Scan Gate blocked UP/DOWN: retake a straight, focused chart photo with more visible candles.")
+        best["warnings"] = warnings[:6]
+    elif angle:
+        notes = list(best.get("warnings") or [])
+        notes.append(f"Mobile orientation rescue: chart was auto-rotated {angle}° before analysis.")
+        best["warnings"] = notes[:6]
+
+    return best
+
+
 @app.post("/api/analyze")
 def analyze():
     rec, err = validate_session()
@@ -1248,7 +1251,7 @@ def analyze():
     if len(raw) > MAX_UPLOAD_BYTES:
         return jsonify({"status": "error", "message": "Image is too large."}), 413
     try:
-        result = analyze_chart_image(raw)
+        result = analyze_chart_image_mobile_safe(raw)
     except ValueError as exc:
         return jsonify({"status": "error", "message": str(exc)}), 400
     broker = str(request.form.get("broker") or "").strip()[:60]
