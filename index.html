@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0b0619">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>RAJA AI Chart Scanner V2</title>
+  <title>RAJA AI Chart Scanner V5</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/static/raja-ai-icon-192.png">
   <link rel="apple-touch-icon" href="/static/raja-ai-icon-192.png">
@@ -36,6 +36,9 @@
     .entryWindow .entryStatus{font-size:9px;font-weight:900;color:#ccefff;line-height:1.35}.entryWindow .entryTimer{grid-column:2;grid-row:1 / span 2;min-width:82px;text-align:center;font-size:22px;font-weight:1000;color:#4ade80;padding:7px 8px;border-radius:10px;border:1px solid rgba(34,197,94,.25);background:rgba(34,197,94,.06);font-variant-numeric:tabular-nums}.entryWindow .entryAlert{font-size:9px;color:#a5b4fc;font-weight:900;line-height:1.35}.entryWindow .entryNote{grid-column:1/-1;color:#8b8b9d;font-size:8.5px;line-height:1.35;margin-top:2px}
     .entryWindow.ready{border-color:rgba(34,197,94,.42);box-shadow:0 0 24px rgba(34,197,94,.08)}.entryWindow.downReady{border-color:rgba(251,113,133,.42);box-shadow:0 0 24px rgba(239,68,68,.08)}
     .cameraStage{position:relative;background:#030207;border:1px solid var(--line);border-radius:16px;overflow:hidden;aspect-ratio:9/16;max-height:68vh;display:flex;align-items:center;justify-content:center}.cameraStage video{width:100%;height:100%;object-fit:cover}.cameraGuide{position:absolute;inset:12%;border:2px dashed rgba(255,255,255,.55);border-radius:14px;pointer-events:none;box-shadow:0 0 0 999px rgba(0,0,0,.14)}.cameraTimer{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);border:1px solid rgba(96,239,255,.4);border-radius:999px;padding:7px 11px;font-weight:1000;color:#60efff;font-variant-numeric:tabular-nums}.cameraHint{font-size:9px;color:#a1a1aa;line-height:1.4;margin:8px 0}.cameraActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}.cameraActions .btn{padding:11px 8px;font-size:10px}
+    .cameraFocusBox{position:absolute;left:50%;top:50%;width:96px;height:96px;transform:translate(-50%,-50%);border:2px solid rgba(245,158,11,.92);border-radius:16px;pointer-events:none;transition:.18s ease;box-shadow:0 0 24px rgba(245,158,11,.12)}.cameraFocusBox.good{border-color:#4ade80;box-shadow:0 0 28px rgba(34,197,94,.25)}.cameraFocusBox.bad{border-color:#fb7185;box-shadow:0 0 28px rgba(239,68,68,.20)}
+    .focusBadge{position:absolute;bottom:13px;left:50%;transform:translateX(-50%);min-width:170px;text-align:center;background:rgba(0,0,0,.72);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:7px 11px;font-size:9px;font-weight:1000;color:#fcd34d}.focusBadge.good{color:#86efac;border-color:rgba(34,197,94,.45)}.focusBadge.bad{color:#fda4af;border-color:rgba(239,68,68,.45)}
+    .focusPanel{margin-top:9px;padding:10px;border:1px solid var(--line);border-radius:13px;background:#0b0814}.focusTop{display:flex;justify-content:space-between;gap:8px;align-items:center}.focusTop b{font-size:10px}.focusMeter{height:7px;background:#05040a;border-radius:999px;overflow:hidden;margin-top:8px}.focusMeter span{display:block;height:100%;width:0;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e);transition:width .18s}.zoomRow{display:flex;align-items:center;gap:8px;margin-top:9px}.zoomRow input{flex:1}.zoomRow small{min-width:36px;text-align:right;color:#c4b5fd}.recentPairs{display:flex;gap:6px;overflow:auto;padding:7px 0 1px;scrollbar-width:none}.recentPairs::-webkit-scrollbar{display:none}.recentPair{white-space:nowrap;border:1px solid var(--line);background:#151027;color:#ddd6fe;border-radius:999px;padding:7px 9px;font-size:9px;font-weight:900;cursor:pointer}.pairDetect{min-height:18px;margin-top:4px;font-size:9px;color:#a1a1aa;line-height:1.35}.pairDetect.good{color:#86efac}.pairDetect.warn{color:#fcd34d}.pairDetect.bad{color:#fda4af}
     .flashOverlay{position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:0}.flashOverlay.up{animation:flashGreen .7s ease-in-out 2}.flashOverlay.down{animation:flashRed .7s ease-in-out 2}.flashOverlay.no{animation:flashAmber .55s ease-in-out 1}@keyframes flashGreen{0%,100%{opacity:0;box-shadow:inset 0 0 0 rgba(34,197,94,0)}50%{opacity:1;box-shadow:inset 0 0 90px rgba(34,197,94,.32)}}@keyframes flashRed{0%,100%{opacity:0;box-shadow:inset 0 0 0 rgba(239,68,68,0)}50%{opacity:1;box-shadow:inset 0 0 90px rgba(239,68,68,.30)}}@keyframes flashAmber{0%,100%{opacity:0}50%{opacity:1;box-shadow:inset 0 0 80px rgba(245,158,11,.24)}}
     .signalPulseUp{animation:resultPulseUp .65s ease-in-out 2}.signalPulseDown{animation:resultPulseDown .65s ease-in-out 2}@keyframes resultPulseUp{50%{border-color:#22c55e;box-shadow:0 0 40px rgba(34,197,94,.28)}}@keyframes resultPulseDown{50%{border-color:#ef4444;box-shadow:0 0 40px rgba(239,68,68,.28)}}
     .adminExit{width:100%;margin-bottom:9px}
@@ -46,7 +49,7 @@
 <div class="app">
   <header class="top">
     <img class="logo" src="/static/raja-ai-icon-192.png" alt="RAJA AI">
-    <div class="title"><h1>RAJA AI Chart Scanner</h1><p>CAMERA / SCREENSHOT → CLOSE-SYNC BIAS</p></div>
+    <div class="title"><h1>RAJA AI Chart Scanner</h1><p>FOCUS CAMERA / SMART PAIR → BOOK STRATEGY</p></div>
     <div class="spacer"></div>
     <button class="iconBtn soundBtn on" id="soundBtn" title="Sound alerts">🔊</button>
     <button class="iconBtn" id="installBtn" title="Install app">⬇</button>
@@ -57,8 +60,8 @@
       <div class="card hero">
         <div class="eyebrow">Classic TA Visual Scanner V4</div>
         <h2>Scan a chart in seconds</h2>
-        <p>Use the camera or upload a Quotex / Pocket Option chart screenshot. RAJA checks readable candle structure, visual trend, momentum and volatility, then returns <b>UP BIAS</b>, <b>DOWN BIAS</b> or <b>NO TRADE</b>.</p>
-        <div class="statusRow"><span class="chip" id="accessChip">🔒 Access locked</span><span class="chip">📷 Camera + Screenshot</span><span class="chip warn">No guaranteed outcome</span></div>
+        <p>Use the camera or upload/share a Quotex / Pocket Option chart screenshot. V5 adds <b>Focus Guard</b>, remembered/recent pairs and optional on-device smart pair text detection before the existing book-style strategy engine returns <b>UP BIAS</b>, <b>DOWN BIAS</b> or <b>NO TRADE</b>.</p>
+        <div class="statusRow"><span class="chip" id="accessChip">🔒 Access locked</span><span class="chip">🎯 Focus Guard</span><span class="chip">🧠 Smart Pair</span><span class="chip warn">No guaranteed outcome</span></div>
       <div class="notice" style="margin-top:9px">Strategy library is decision support only. Short-expiry binary options remain high risk; conflicting setups stay NO TRADE.</div>
       </div>
 
@@ -76,6 +79,8 @@
           <div><label>Market</label><select id="market"></select></div>
         </div>
         <label>Pair</label><select id="pair"></select>
+        <div class="recentPairs" id="recentPairs"></div>
+        <div class="pairDetect" id="pairDetectStatus">Smart Pair: upload a screenshot; supported browsers can read the broker header automatically.</div>
         <label>Timeframe / Expiry</label><select id="timeframe"><option>1m</option><option>2m</option><option>5m</option><option>10m</option><option>15m</option><option>30m</option></select>
         <div class="entryWindow" id="entryWindow">
           <div class="entryStatus" id="entryStatus">CURRENT 1M CANDLE — READY</div>
@@ -94,7 +99,7 @@
         <div class="kv">
           <div><small>Trend</small><b id="trendText">--</b></div><div><small>Momentum</small><b id="momentumText">--</b></div>
           <div><small>Volatility</small><b id="volText">--</b></div><div><small>Candles Read</small><b id="candlesText">--</b></div>
-          <div><small>Image Quality</small><b id="qualityText">--</b></div><div><small>Engine</small><b id="engineText">Strategy V4</b></div>
+          <div><small>Image Quality</small><b id="qualityText">--</b></div><div><small>Engine</small><b id="engineText">Strategy V4 + V5 UX</b></div>
           <div><small>Best Strategy</small><b id="strategyText">--</b></div><div><small>Strategy Score</small><b id="strategyScoreText">--</b></div>
           <div><small>Confluence</small><b id="confluenceText">--</b></div><div><small>Setup Quality</small><b id="setupQualityText">--</b></div>
           <div><small>Strategy Library</small><b id="libraryText">15 Classic TA Setups</b></div><div><small>Safety Gate</small><b>Confluence + NO TRADE</b></div>
@@ -141,7 +146,7 @@
 <nav class="nav" id="bottomNav"><div class="navInner"><button class="navBtn active" data-tab="scan"><span>📷</span>Scan</button><button class="navBtn" data-tab="history"><span>🕘</span>History</button><button class="navBtn" data-tab="plans"><span>💎</span>Plans</button></div></nav>
 
 <div class="flashOverlay" id="flashOverlay"></div>
-<div class="modal" id="cameraModal"><div class="sheet"><div class="sheetHead"><h3>📷 Live Close Scanner</h3><button class="close" onclick="closeLiveCamera()">✕</button></div><div class="cameraStage"><video id="cameraVideo" autoplay playsinline muted></video><div class="cameraGuide"></div><div class="cameraTimer" id="cameraTimer">READY</div></div><div class="cameraHint">Keep only the broker candle chart inside the guide. For strict timing, ARM CLOSE SCAN will auto-capture at the selected candle close, analyze that fresh frame, then issue the next-candle entry alert if a valid bias is found.</div><div class="cameraActions"><button class="btn secondary" onclick="captureCameraNow()">📸 CAPTURE NOW</button><button class="btn green" id="armCloseBtn" onclick="armCameraCloseScan()">⏱ ARM CLOSE SCAN</button></div><div class="notice" id="cameraMsg"></div></div></div>
+<div class="modal" id="cameraModal"><div class="sheet"><div class="sheetHead"><h3>📷 V5 Focus Camera</h3><button class="close" onclick="closeLiveCamera()">✕</button></div><div class="cameraStage" id="cameraStage"><video id="cameraVideo" autoplay playsinline muted></video><div class="cameraGuide"></div><div class="cameraFocusBox" id="cameraFocusBox"></div><div class="cameraTimer" id="cameraTimer">READY</div><div class="focusBadge" id="focusBadge">FOCUS STARTING…</div></div><div class="cameraHint">Keep the candle chart inside the guide. Tap the preview to request focus where supported. Focus Guard checks sharpness + movement and blocks accidental blurred capture. ARM CLOSE SCAN only captures a focused frame at candle close.</div><div class="focusPanel"><div class="focusTop"><b id="focusDetail">Sharpness -- · Motion --</b><button class="btn secondary" id="focusGuardBtn" style="padding:7px 9px" onclick="toggleFocusGuard()">FOCUS GUARD ON</button></div><div class="focusMeter"><span id="focusMeterBar"></span></div><div class="zoomRow hide" id="zoomRow"><span style="font-size:9px;color:#a1a1aa">ZOOM</span><input type="range" id="cameraZoom" min="1" max="1" step="0.1" value="1"><small id="zoomValue">1.0×</small></div></div><div class="cameraActions"><button class="btn secondary" id="captureNowBtn" onclick="captureCameraNow()">📸 CAPTURE NOW</button><button class="btn green" id="armCloseBtn" onclick="armCameraCloseScan()">⏱ ARM CLOSE SCAN</button></div><div class="notice" id="cameraMsg"></div></div></div>
 <div class="modal" id="adminGateModal"><div class="sheet"><div class="sheetHead"><h3>🛡 Hidden Admin</h3><button class="close" onclick="exitAdmin()">✕</button></div><label>Admin Code</label><input type="password" inputmode="numeric" class="input" id="adminGateCode" placeholder="Enter admin code"><button class="btn" style="width:100%;margin-top:10px" onclick="unlockAdmin()">UNLOCK ADMIN</button><div id="adminGateMsg" class="notice"></div></div></div>
 <div class="modal" id="loginModal"><div class="sheet"><div class="sheetHead"><h3>🔑 Unlock Scanner</h3><button class="close" onclick="closeModal('loginModal')">✕</button></div><label>User / UID</label><input id="loginUser" class="input" placeholder="Telegram ID / UID"><label>License Key</label><input id="loginKey" class="input" placeholder="RAJA-SCAN-..."><button class="btn" style="width:100%;margin-top:10px" onclick="loginLicense()">VERIFY & UNLOCK</button><div id="loginMsg" class="notice"></div></div></div>
 <div class="modal" id="trialModal"><div class="sheet"><div class="sheetHead"><h3>🎁 12 Hour Free Trial</h3><button class="close" onclick="closeModal('trialModal')">✕</button></div><label>User / UID</label><input id="trialUser" class="input" placeholder="Telegram ID / UID"><button class="btn green" style="width:100%;margin-top:10px" onclick="startTrial()">START ONE-TIME TRIAL</button><div id="trialMsg" class="notice"></div></div></div>
@@ -220,7 +225,8 @@ async function licenseAction(key,action){await adminPost('/api/admin/license-act
 async function generateLicense(){const user=$('genUser').value.trim(),plan=$('genPlan').value,duration_days=Number($('genDuration').value);try{const j=await adminPost('/api/admin/generate-license',{user_id:user,plan,duration_days});$('generatedKey').innerHTML=`✅ ${escapeHtml(j.plan)}<br>Key: <b>${escapeHtml(j.license_key)}</b><br>Expiry: ${escapeHtml(fmtDate(j.expires_at))}`;loadAdminLicenses()}catch(e){$('generatedKey').textContent='❌ '+e.message}}
 async function adminPost(url,extra){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(adminBody(extra))});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Admin request failed');return j}
 
-(async()=>{await loadConfig();await refreshSession();if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{})})();
+async function loadSharedChartFromUrl(){const u=new URL(location.href),token=u.searchParams.get('shared');if(!token)return;const status=$('pairDetectStatus');try{status.className='pairDetect';status.textContent='Loading chart shared to RAJA Scanner…';const r=await fetch('/api/shared-image/'+encodeURIComponent(token),{cache:'no-store'});if(!r.ok)throw new Error('Shared chart expired or unavailable');const blob=await r.blob();const ext=(blob.type||'image/jpeg').includes('png')?'png':(blob.type||'').includes('webp')?'webp':'jpg';const f=new File([blob],`shared-chart.${ext}`,{type:blob.type||'image/jpeg'});chooseFile(f,'shared-screenshot',0);u.searchParams.delete('shared');history.replaceState(null,'',u.pathname+(u.searchParams.toString()?'?'+u.searchParams.toString():'')+u.hash);status.className='pairDetect good';status.textContent='Shared chart loaded. Smart Pair will try to match the broker header.'}catch(e){status.className='pairDetect bad';status.textContent='Shared chart error: '+e.message}}
+(async()=>{await loadConfig();await refreshSession();if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});await loadSharedChartFromUrl()})();
 
 
 // ============================================================
@@ -240,6 +246,16 @@ let cameraStream = null;
 let cameraArmEpochMs = 0;
 let cameraArmTimer = null;
 let cameraCountdownDone = new Set();
+let cameraFocusTimer = null;
+let cameraFocusScore = 0;
+let cameraMotionScore = 100;
+let cameraFocusStableCount = 0;
+let cameraPrevLuma = null;
+let cameraTrack = null;
+let cameraCaps = {};
+let focusGuardEnabled = localStorage.getItem('raja_focus_guard') !== 'false';
+const V5_SELECTION_KEY='raja_scanner_selection_v5';
+const V5_RECENT_KEY='raja_scanner_recent_pairs_v5';
 
 function brokerKey(){ return $('broker').value === 'Pocket Option' ? 'PocketOption' : 'Quotex'; }
 function availableMarkets(){ const key=brokerKey(); return Object.keys(RAJA_BROKER_DATA[key]||{}); }
@@ -254,7 +270,23 @@ function refreshPairs(){
   $('pair').innerHTML=''; rows.forEach(p=>{const o=document.createElement('option');o.value=p;o.textContent=p;$('pair').appendChild(o)});
   if(rows.includes(old)) $('pair').value=old;
 }
-$('broker').addEventListener('change',refreshMarkets); $('market').addEventListener('change',refreshPairs);
+function currentSelection(){return {broker:$('broker').value,market:$('market').value,pair:$('pair').value,timeframe:$('timeframe').value}};
+function saveSelection(){try{localStorage.setItem(V5_SELECTION_KEY,JSON.stringify(currentSelection()))}catch(_){}}
+function restoreSelection(){try{const s=JSON.parse(localStorage.getItem(V5_SELECTION_KEY)||'null');if(!s)return;if([...$('broker').options].some(o=>o.value===s.broker))$('broker').value=s.broker;refreshMarkets();if([...$('market').options].some(o=>o.value===s.market)){$('market').value=s.market;refreshPairs()}if([...$('pair').options].some(o=>o.value===s.pair))$('pair').value=s.pair;if([...$('timeframe').options].some(o=>o.value===s.timeframe))$('timeframe').value=s.timeframe}catch(_){}}
+function readRecents(){try{const a=JSON.parse(localStorage.getItem(V5_RECENT_KEY)||'[]');return Array.isArray(a)?a:[]}catch(_){return []}}
+function addRecentPair(){const s=currentSelection();if(!s.pair)return;let rows=readRecents().filter(x=>!(x.broker===s.broker&&x.market===s.market&&x.pair===s.pair));rows.unshift(s);rows=rows.slice(0,6);try{localStorage.setItem(V5_RECENT_KEY,JSON.stringify(rows))}catch(_){}renderRecentPairs()}
+function renderRecentPairs(){const box=$('recentPairs');if(!box)return;const rows=readRecents();box.innerHTML=rows.length?rows.map((x,i)=>`<button type="button" class="recentPair" data-recent="${i}">${escapeHtml(x.pair)} · ${escapeHtml(x.timeframe||'')}</button>`).join(''):'<span style="font-size:9px;color:#777087;padding:4px 2px">Recent pairs appear here after a scan.</span>';box.querySelectorAll('[data-recent]').forEach(b=>b.onclick=()=>applyRecent(Number(b.dataset.recent)))}
+function applyRecent(i){const s=readRecents()[i];if(!s)return;if([...$('broker').options].some(o=>o.value===s.broker))$('broker').value=s.broker;refreshMarkets();if([...$('market').options].some(o=>o.value===s.market)){$('market').value=s.market;refreshPairs()}if([...$('pair').options].some(o=>o.value===s.pair))$('pair').value=s.pair;if([...$('timeframe').options].some(o=>o.value===s.timeframe))$('timeframe').value=s.timeframe;saveSelection();$('pairDetectStatus').className='pairDetect good';$('pairDetectStatus').textContent=`Recent pair loaded: ${s.broker} · ${s.pair} · ${s.timeframe}`;tickEntryTimer()}
+$('broker').addEventListener('change',()=>{refreshMarkets();saveSelection()});
+$('market').addEventListener('change',()=>{refreshPairs();saveSelection()});
+$('pair').addEventListener('change',saveSelection);
+$('timeframe').addEventListener('change',saveSelection);
+
+function normPairText(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
+function allPairCandidates(){const out=[];for(const [bk,markets] of Object.entries(RAJA_BROKER_DATA)){for(const [market,rows] of Object.entries(markets||{})){for(const pair of rows||[]){out.push({broker:bk==='PocketOption'?'Pocket Option':'Quotex',market,pair,key:normPairText(pair),base:normPairText(String(pair).replace(/\(OTC\)/ig,''))})}}}return out}
+function applyDetectedSelection(hit,sourceText=''){if(!hit)return false;if([...$('broker').options].some(o=>o.value===hit.broker))$('broker').value=hit.broker;refreshMarkets();if([...$('market').options].some(o=>o.value===hit.market)){$('market').value=hit.market;refreshPairs()}if([...$('pair').options].some(o=>o.value===hit.pair))$('pair').value=hit.pair;const tf=String(sourceText).match(/(?:^|\s)(1|2|5|10|15|30)\s*(?:M|MIN)(?:\s|$)/i);if(tf&&[...$('timeframe').options].some(o=>o.value===tf[1]+'m'))$('timeframe').value=tf[1]+'m';saveSelection();return true}
+async function smartDetectPair(file){const status=$('pairDetectStatus');if(!status||!file)return;status.className='pairDetect';status.textContent='Smart Pair: checking screenshot header…';let text=String(file.name||'');let usedDetector=false;try{if('TextDetector' in window&&window.createImageBitmap){const bitmap=await createImageBitmap(file);try{const detector=new TextDetector();const blocks=await detector.detect(bitmap);text+=' '+(blocks||[]).map(x=>x.rawValue||'').join(' ');usedDetector=true}finally{if(bitmap&&bitmap.close)bitmap.close()}}}catch(e){console.debug('TextDetector unavailable',e)}
+  const upper=String(text||'').toUpperCase();const norm=normPairText(upper);const hasOTC=/\bOTC\b/i.test(upper);const explicitBroker=upper.includes('POCKET OPTION')?'Pocket Option':upper.includes('QUOTEX')?'Quotex':'';let hits=allPairCandidates().filter(c=>(!explicitBroker||c.broker===explicitBroker)&&((c.key.length>=6&&norm.includes(c.key))||(c.base.length>=6&&norm.includes(c.base))));if(hasOTC){const otc=hits.filter(h=>/OTC/i.test(h.pair)||/OTC/i.test(h.market));if(otc.length)hits=otc}else{const live=hits.filter(h=>!/OTC/i.test(h.pair)&&!/OTC/i.test(h.market));if(live.length)hits=live}hits.sort((a,b)=>b.key.length-a.key.length);const hit=hits[0];if(hit&&applyDetectedSelection(hit,upper)){status.className='pairDetect good';status.textContent=`Smart Pair detected: ${hit.broker} · ${hit.pair}${usedDetector?' · on-device text':' · filename'}`;return}status.className='pairDetect warn';status.textContent=usedDetector?'Smart Pair could not confidently match this header — remembered/current pair kept.':'Smart Pair text detector is not available in this browser — remembered/recent pair kept.'}
 
 function tfSeconds(){ const map={'1m':60,'2m':120,'5m':300,'10m':600,'15m':900,'30m':1800}; return map[$('timeframe').value]||60; }
 function nextBoundaryMs(now=Date.now()){
@@ -315,31 +347,39 @@ setInterval(tickEntryTimer,250); $('timeframe').addEventListener('change',()=>{r
 
 // Override file selection so source/timing context is preserved.
 const originalChooseFile = chooseFile;
-chooseFile = function(file, source='screenshot', boundaryMs=0){selectedFileSource=source;selectedCaptureBoundaryMs=Number(boundaryMs||0);originalChooseFile(file);resetEntryState();tickEntryTimer()};
+chooseFile = function(file, source='screenshot', boundaryMs=0){selectedFileSource=source;selectedCaptureBoundaryMs=Number(boundaryMs||0);originalChooseFile(file);resetEntryState();tickEntryTimer();smartDetectPair(file).catch(()=>{})};
 $('uploadInput').onchange=e=>chooseFile(e.target.files[0],'screenshot',0);
 $('cameraInput').onchange=e=>chooseFile(e.target.files[0],'camera-photo',0);
 
-// Live camera with automatic candle-close capture.
+// V5 live camera: autofocus request + sharpness/motion Focus Guard + candle-close capture.
+function focusReady(){return !focusGuardEnabled || (cameraFocusScore>=24 && cameraMotionScore<=18 && cameraFocusStableCount>=2)}
+function updateFocusUI(){const good=focusReady(),badge=$('focusBadge'),box=$('cameraFocusBox'),bar=$('focusMeterBar'),detail=$('focusDetail');if(!badge)return;badge.className='focusBadge '+(good?'good':'bad');box.className='cameraFocusBox '+(good?'good':'bad');badge.textContent=focusGuardEnabled?(good?'FOCUS LOCKED ✅':'HOLD STEADY · FOCUSING…'):'FOCUS GUARD OFF';bar.style.width=`${Math.max(0,Math.min(100,cameraFocusScore))}%`;detail.textContent=`Sharpness ${cameraFocusScore.toFixed(0)} · Motion ${cameraMotionScore.toFixed(0)}`;const cap=$('captureNowBtn');if(cap)cap.disabled=focusGuardEnabled&&!good;const arm=$('armCloseBtn');if(arm&&!cameraArmEpochMs)arm.disabled=focusGuardEnabled&&!good;$('focusGuardBtn').textContent=focusGuardEnabled?'FOCUS GUARD ON':'FOCUS GUARD OFF'}
+function toggleFocusGuard(){focusGuardEnabled=!focusGuardEnabled;localStorage.setItem('raja_focus_guard',String(focusGuardEnabled));cameraFocusStableCount=0;updateFocusUI()}
+async function requestContinuousFocus(){if(!cameraTrack||!cameraTrack.applyConstraints)return;try{cameraCaps=cameraTrack.getCapabilities?cameraTrack.getCapabilities():{};const adv=[];if(Array.isArray(cameraCaps.focusMode)&&cameraCaps.focusMode.includes('continuous'))adv.push({focusMode:'continuous'});if(adv.length)await cameraTrack.applyConstraints({advanced:adv})}catch(e){console.debug('continuous focus constraint',e)}}
+async function tapCameraFocus(ev){if(!cameraTrack)return;const stage=$('cameraStage'),rect=stage.getBoundingClientRect();const x=Math.max(0,Math.min(1,(ev.clientX-rect.left)/rect.width)),y=Math.max(0,Math.min(1,(ev.clientY-rect.top)/rect.height));const box=$('cameraFocusBox');box.style.left=`${x*100}%`;box.style.top=`${y*100}%`;cameraFocusStableCount=0;try{const adv={};if(Array.isArray(cameraCaps.focusMode)&&cameraCaps.focusMode.includes('single-shot'))adv.focusMode='single-shot';if(cameraCaps.pointsOfInterest!==undefined)adv.pointsOfInterest=[{x,y}];if(Object.keys(adv).length)await cameraTrack.applyConstraints({advanced:[adv]});setTimeout(requestContinuousFocus,900)}catch(e){console.debug('tap focus',e)}setTimeout(()=>{box.style.left='50%';box.style.top='50%'},1100)}
+function setupCameraZoom(){const row=$('zoomRow'),input=$('cameraZoom'),label=$('zoomValue');row.classList.add('hide');if(!cameraCaps||cameraCaps.zoom===undefined)return;const z=cameraCaps.zoom;const min=Number(z.min||1),max=Number(z.max||min),step=Number(z.step||0.1);if(!(max>min))return;input.min=String(min);input.max=String(max);input.step=String(step);input.value=String(Math.max(min,Math.min(max,Number(cameraTrack.getSettings?.().zoom||min))));label.textContent=Number(input.value).toFixed(1)+'×';input.oninput=async()=>{label.textContent=Number(input.value).toFixed(1)+'×';try{await cameraTrack.applyConstraints({advanced:[{zoom:Number(input.value)}]})}catch(_){}};row.classList.remove('hide')}
+function measureCameraFocus(){const v=$('cameraVideo');if(!v||!v.videoWidth||!v.videoHeight)return;const c=measureCameraFocus.canvas||(measureCameraFocus.canvas=document.createElement('canvas'));c.width=160;c.height=100;const ctx=c.getContext('2d',{willReadFrequently:true});const sw=v.videoWidth*.70,sh=v.videoHeight*.62,sx=(v.videoWidth-sw)/2,sy=(v.videoHeight-sh)/2;ctx.drawImage(v,sx,sy,sw,sh,0,0,c.width,c.height);const d=ctx.getImageData(0,0,c.width,c.height).data;const lum=new Float32Array(c.width*c.height);for(let i=0,j=0;i<d.length;i+=4,j++)lum[j]=.299*d[i]+.587*d[i+1]+.114*d[i+2];let lap=0,n=0;for(let y=1;y<c.height-1;y+=2){for(let x=1;x<c.width-1;x+=2){const i=y*c.width+x;lap+=Math.abs(4*lum[i]-lum[i-1]-lum[i+1]-lum[i-c.width]-lum[i+c.width]);n++}}const raw=n?lap/n:0;cameraFocusScore=Math.min(100,raw*3.2);if(cameraPrevLuma&&cameraPrevLuma.length===lum.length){let md=0,mn=0;for(let i=0;i<lum.length;i+=8){md+=Math.abs(lum[i]-cameraPrevLuma[i]);mn++}cameraMotionScore=Math.min(100,(mn?md/mn:100)*3.0)}else cameraMotionScore=100;cameraPrevLuma=lum;if(cameraFocusScore>=24&&cameraMotionScore<=18)cameraFocusStableCount=Math.min(5,cameraFocusStableCount+1);else cameraFocusStableCount=0;updateFocusUI()}
+function startCameraFocusMonitor(){if(cameraFocusTimer)clearInterval(cameraFocusTimer);cameraPrevLuma=null;cameraFocusScore=0;cameraMotionScore=100;cameraFocusStableCount=0;updateFocusUI();cameraFocusTimer=setInterval(measureCameraFocus,360)}
 async function openLiveCamera(){
   if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)){$('cameraInput').click();return}
-  openModal('cameraModal');$('cameraMsg').textContent='Starting camera…';
-  try{cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});$('cameraVideo').srcObject=cameraStream;$('cameraMsg').textContent='Camera ready. Keep the chart inside the guide.';tickCameraArm()}catch(e){$('cameraMsg').textContent='Camera access failed. Falling back to normal camera capture.';setTimeout(()=>{$('cameraInput').click();closeLiveCamera()},700)}
+  openModal('cameraModal');$('cameraMsg').textContent='Starting camera + autofocus…';updateFocusUI();
+  try{cameraStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});$('cameraVideo').srcObject=cameraStream;cameraTrack=cameraStream.getVideoTracks()[0]||null;cameraCaps=cameraTrack&&cameraTrack.getCapabilities?cameraTrack.getCapabilities():{};await requestContinuousFocus();setupCameraZoom();$('cameraStage').onclick=tapCameraFocus;$('cameraMsg').textContent='Camera ready. Hold steady until FOCUS LOCKED ✅.';startCameraFocusMonitor();tickCameraArm()}catch(e){$('cameraMsg').textContent='Camera access failed. Falling back to normal camera capture.';setTimeout(()=>{$('cameraInput').click();closeLiveCamera()},700)}
 }
-function stopCameraStream(){if(cameraStream){cameraStream.getTracks().forEach(t=>t.stop());cameraStream=null}if(cameraArmTimer){clearInterval(cameraArmTimer);cameraArmTimer=null}cameraArmEpochMs=0;cameraCountdownDone.clear()}
+function stopCameraStream(){if(cameraStream){cameraStream.getTracks().forEach(t=>t.stop());cameraStream=null}cameraTrack=null;cameraCaps={};if(cameraFocusTimer){clearInterval(cameraFocusTimer);cameraFocusTimer=null}cameraPrevLuma=null;if(cameraArmTimer){clearInterval(cameraArmTimer);cameraArmTimer=null}cameraArmEpochMs=0;cameraCountdownDone.clear()}
 function closeLiveCamera(){stopCameraStream();closeModal('cameraModal')}
-function frameFileFromVideo(){return new Promise((resolve,reject)=>{const v=$('cameraVideo');if(!v.videoWidth||!v.videoHeight){reject(new Error('Camera frame is not ready.'));return}const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);c.toBlob(blob=>blob?resolve(new File([blob],`raja-close-${Date.now()}.jpg`,{type:'image/jpeg'})):reject(new Error('Unable to capture frame.')),'image/jpeg',.92)})}
-async function captureCameraNow(){try{const f=await frameFileFromVideo();chooseFile(f,'camera-live',0);closeLiveCamera();$('preview').scrollIntoView({behavior:'smooth',block:'center'})}catch(e){$('cameraMsg').textContent='❌ '+e.message}}
-async function captureCameraAtClose(boundary){try{const f=await frameFileFromVideo();chooseFile(f,'camera-close',boundary);closeLiveCamera();await analyzeV2({capturedAtClose:true,entryEpochMs:boundary})}catch(e){$('cameraMsg').textContent='❌ '+e.message}}
+function frameFileFromVideo(){return new Promise((resolve,reject)=>{const v=$('cameraVideo');if(!v.videoWidth||!v.videoHeight){reject(new Error('Camera frame is not ready.'));return}const c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;c.getContext('2d').drawImage(v,0,0,c.width,c.height);c.toBlob(blob=>blob?resolve(new File([blob],`raja-v5-${Date.now()}.jpg`,{type:'image/jpeg'})):reject(new Error('Unable to capture frame.')),'image/jpeg',.94)})}
+async function captureCameraNow(){if(focusGuardEnabled&&!focusReady()){$('cameraMsg').textContent='⏳ Focus Guard blocked a soft/moving frame. Hold steady until FOCUS LOCKED ✅ or switch Focus Guard OFF.';return}try{const f=await frameFileFromVideo();chooseFile(f,'camera-live',0);closeLiveCamera();$('preview').scrollIntoView({behavior:'smooth',block:'center'})}catch(e){$('cameraMsg').textContent='❌ '+e.message}}
+async function captureCameraAtClose(boundary){if(focusGuardEnabled&&!focusReady()){$('cameraMsg').textContent='❌ Candle close reached but frame was not focused/stable. No blurred scan was sent — re-arm after FOCUS LOCKED.';cameraArmEpochMs=0;updateFocusUI();return}try{const f=await frameFileFromVideo();chooseFile(f,'camera-close',boundary);closeLiveCamera();await analyzeV2({capturedAtClose:true,entryEpochMs:boundary})}catch(e){$('cameraMsg').textContent='❌ '+e.message}}
 function tickCameraArm(){
-  const span=tfSeconds(), now=Date.now(), boundary=cameraArmEpochMs||nextBoundaryMs(now), remain=boundary-now;
+  const now=Date.now(), boundary=cameraArmEpochMs||nextBoundaryMs(now), remain=boundary-now;
   $('cameraTimer').textContent=cameraArmEpochMs?`CLOSE ${fmtClock(remain/1000)}`:`${$('timeframe').value.toUpperCase()} · ${fmtClock((nextBoundaryMs(now)-now)/1000)}`;
-  if(cameraArmEpochMs){const s=Math.ceil(remain/1000);if(s===10&&!cameraCountdownDone.has(10)){cameraCountdownDone.add(10);attention10()}[5,4,3,2,1].forEach(n=>{if(s===n&&!cameraCountdownDone.has(n)){cameraCountdownDone.add(n);countdownTick()}});if(remain<=0){const b=cameraArmEpochMs;cameraArmEpochMs=0;if(cameraArmTimer){clearInterval(cameraArmTimer);cameraArmTimer=null}captureCameraAtClose(b)}}
+  if(cameraArmEpochMs){$('armCloseBtn').disabled=false;const s=Math.ceil(remain/1000);if(s===10&&!cameraCountdownDone.has(10)){cameraCountdownDone.add(10);attention10()}[5,4,3,2,1].forEach(n=>{if(s===n&&!cameraCountdownDone.has(n)){cameraCountdownDone.add(n);countdownTick()}});if(remain<=0){const b=cameraArmEpochMs;cameraArmEpochMs=0;if(cameraArmTimer){clearInterval(cameraArmTimer);cameraArmTimer=null}captureCameraAtClose(b)}}
 }
-function armCameraCloseScan(){if(!cameraStream){$('cameraMsg').textContent='Start the live camera first.';return}cameraArmEpochMs=nextBoundaryMs();cameraCountdownDone.clear();$('cameraMsg').textContent=`Armed for ${$('timeframe').value.toUpperCase()} candle close. Keep chart steady.`;if(cameraArmTimer)clearInterval(cameraArmTimer);tickCameraArm();cameraArmTimer=setInterval(tickCameraArm,100)}
+function armCameraCloseScan(){if(!cameraStream){$('cameraMsg').textContent='Start the live camera first.';return}if(focusGuardEnabled&&!focusReady()){$('cameraMsg').textContent='Focus Guard: wait for FOCUS LOCKED ✅ before arming close scan.';return}cameraArmEpochMs=nextBoundaryMs();cameraCountdownDone.clear();$('cameraMsg').textContent=`Armed for ${$('timeframe').value.toUpperCase()} candle close. Keep chart steady and focused.`;if(cameraArmTimer)clearInterval(cameraArmTimer);tickCameraArm();cameraArmTimer=setInterval(tickCameraArm,100)}
 $('cameraBtn').onclick=openLiveCamera;
 
 async function analyzeV2(opts={}){
-  if(!selectedFile)return;const ok=await refreshSession();if(!ok){openLogin();return}
+  if(!selectedFile)return;saveSelection();addRecentPair();const ok=await refreshSession();if(!ok){openLogin();return}
   const b=$('analyzeBtn');b.disabled=true;b.innerHTML='<span class="spinner"></span>ANALYZING...';
   const fd=new FormData();fd.append('image',selectedFile);fd.append('broker',$('broker').value);fd.append('market',$('market').value);fd.append('pair',$('pair').value);fd.append('timeframe',$('timeframe').value);
   try{const r=await fetch('/api/analyze',{method:'POST',headers:authHeaders(),body:fd});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Analysis failed');renderResult(j.result);startSignalEntry(j.result,{capturedAtClose:Boolean(opts.capturedAtClose),entryEpochMs:Number(opts.entryEpochMs||0)})}catch(e){alert(e.message)}finally{b.disabled=false;b.textContent='✨ ANALYZE CHART'}
@@ -365,7 +405,7 @@ function exitAdmin(){sessionStorage.removeItem('raja_scanner_admin_ok');$('admin
 window.addEventListener('hashchange',()=>{if(!showAdminRoute()){$('bottomNav').style.display='';if(!$('tab-admin').classList.contains('hide'))setTab('scan')}});
 
 // First V2 initialization.
-refreshMarkets();updateSoundBtn();tickEntryTimer();setTimeout(showAdminRoute,0);
+refreshMarkets();restoreSelection();renderRecentPairs();updateSoundBtn();updateFocusUI();tickEntryTimer();setTimeout(showAdminRoute,0);
 </script>
 </body>
 </html>
