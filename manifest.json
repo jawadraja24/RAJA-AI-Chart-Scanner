@@ -1,20 +1,38 @@
 {
-  "name": "RAJA AI Chart Scanner V10 - SK Pattern Types 1-25",
-  "short_name": "RAJA Scanner V10",
+  "name": "RAJA AI Chart Scanner V11 - Strict SK Pattern Types 1-25",
+  "short_name": "RAJA Scanner V11",
   "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui"],
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "orientation": "portrait-primary",
   "background_color": "#090512",
   "theme_color": "#0b0619",
-  "description": "RAJA AI chart scanner using only the supplied SK Trading Club Pattern Type 1-25 rules, with AI Lens camera, exact-rule scan gate, next-candle alerts and demo paper testing.",
+  "description": "RAJA AI chart scanner using only SK Pattern Type 1-25 with Closed Candle Lock, adaptive candle-colour vision, conflict gate, one-tap close camera scan and demo paper testing.",
   "prefer_related_applications": false,
   "icons": [
-    {"src":"/static/raja-ai-icon-192.png","sizes":"192x192","type":"image/png","purpose":"any"},
-    {"src":"/static/raja-ai-icon-512.png","sizes":"512x512","type":"image/png","purpose":"any"},
-    {"src":"/static/raja-ai-icon-512.png","sizes":"512x512","type":"image/png","purpose":"maskable"}
+    {
+      "src": "/static/raja-ai-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/raja-ai-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/raja-ai-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ],
   "share_target": {
     "action": "/share-target",
@@ -24,7 +42,16 @@
       "title": "title",
       "text": "text",
       "url": "url",
-      "files": [{"name":"chart","accept":["image/png","image/jpeg","image/webp"]}]
+      "files": [
+        {
+          "name": "chart",
+          "accept": [
+            "image/png",
+            "image/jpeg",
+            "image/webp"
+          ]
+        }
+      ]
     }
   }
 }
