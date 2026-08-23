@@ -1,13 +1,13 @@
 {
-  "name": "RAJA AI Chart Scanner V7",
+  "name": "RAJA AI Chart Scanner V9 Pattern Only",
   "short_name": "RAJA Scanner",
   "id": "/",
-  "start_url": "/?source=pwa-v7",
+  "start_url": "/?source=pwa-v9",
   "scope": "/",
   "display": "standalone",
   "background_color": "#090512",
   "theme_color": "#0b0619",
-  "description": "RAJA AI chart scanner with pair-labelled signals, mobile adaptive analysis, Focus Guard, simple license unlock and one-tap install prompt.",
+  "description": "RAJA AI pattern-only chart scanner with V8 Focus Guard, mobile Scan Gate, pair-labelled signals and persistent license support.",
   "icons": [
     {
       "src": "/static/raja-ai-icon-192.png",
