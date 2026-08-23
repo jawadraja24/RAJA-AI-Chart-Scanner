@@ -93,8 +93,12 @@
         <div class="kv">
           <div><small>Trend</small><b id="trendText">--</b></div><div><small>Momentum</small><b id="momentumText">--</b></div>
           <div><small>Volatility</small><b id="volText">--</b></div><div><small>Candles Read</small><b id="candlesText">--</b></div>
-          <div><small>Image Quality</small><b id="qualityText">--</b></div><div><small>Engine</small><b>Visual V2</b></div>
+          <div><small>Image Quality</small><b id="qualityText">--</b></div><div><small>Engine</small><b id="engineText">Strategy V3</b></div>
+          <div><small>Best Strategy</small><b id="strategyText">--</b></div><div><small>Strategy Score</small><b id="strategyScoreText">--</b></div>
+          <div><small>Confluence</small><b id="confluenceText">--</b></div><div><small>Setup Quality</small><b id="setupQualityText">--</b></div>
         </div>
+        <h4 class="sectionTitle" style="margin-top:13px">Strategy Confirmations</h4>
+        <div class="indicatorGrid" id="strategyGrid"></div>
         <h4 class="sectionTitle" style="margin-top:13px">Why</h4><ul class="list" id="reasons"></ul>
         <div class="warnBox hide" id="warnings"></div>
         <h4 class="sectionTitle" style="margin-top:13px">Indicator Readiness</h4><div class="indicatorGrid" id="indicatorGrid"></div>
@@ -164,7 +168,33 @@ $('cameraBtn').onclick=()=>$('cameraInput').click();$('uploadBtn').onclick=()=>$
 function chooseFile(file){if(!file)return;selectedFile=file;const url=URL.createObjectURL(file);$('previewImg').src=url;$('preview').style.display='block';$('fileMeta').textContent=`${file.name||'camera-photo'} · ${(file.size/1024/1024).toFixed(2)} MB`;/* Enable after a file is selected. If access is locked, analyze()/analyzeV2() will open the existing login dialog. */$('analyzeBtn').disabled=false}
 $('analyzeBtn').onclick=analyze;
 async function analyze(){if(!selectedFile)return;const ok=await refreshSession();if(!ok){openLogin();return}const b=$('analyzeBtn');b.disabled=true;b.innerHTML='<span class="spinner"></span>ANALYZING...';const fd=new FormData();fd.append('image',selectedFile);fd.append('broker',$('broker').value);fd.append('pair',$('pair').value.trim()||'Unknown Pair');fd.append('timeframe',$('timeframe').value);try{const r=await fetch('/api/analyze',{method:'POST',headers:authHeaders(),body:fd});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Analysis failed');renderResult(j.result)}catch(e){alert(e.message)}finally{b.disabled=false;b.textContent='✨ ANALYZE CHART'}}
-function renderResult(x){$('resultCard').style.display='block';const box=$('biasBox'),bias=String(x.bias||'NO TRADE');box.className='bias '+(bias.startsWith('UP')?'up':bias.startsWith('DOWN')?'down':'no');$('biasText').textContent=bias;$('confidenceText').textContent=`${Number(x.confidence||0).toFixed(1)}%`;$('confidenceBar').style.width=`${Math.max(0,Math.min(100,Number(x.confidence||0)))}%`;$('trendText').textContent=x.visual_trend||'--';$('momentumText').textContent=x.momentum||'--';$('volText').textContent=x.volatility||'--';$('candlesText').textContent=x.detected_candles??'--';$('qualityText').textContent=`${Number(x.image_quality_score||0).toFixed(0)}/100`;$('reasons').innerHTML=(x.reasons||[]).map(v=>`<li>${escapeHtml(v)}</li>`).join('');const ws=x.warnings||[];$('warnings').classList.toggle('hide',!ws.length);$('warnings').innerHTML=ws.map(v=>`⚠ ${escapeHtml(v)}`).join('<br>');$('indicatorGrid').innerHTML=Object.entries(x.indicator_status||{}).map(([k,v])=>`<div class="indicator"><b>${escapeHtml(k)}</b><span>${escapeHtml(v)}</span></div>`).join('');$('resultCard').scrollIntoView({behavior:'smooth',block:'start'})}
+function renderResult(x){
+  $('resultCard').style.display='block';
+  const box=$('biasBox'),bias=String(x.bias||'NO TRADE');
+  box.className='bias '+(bias.startsWith('UP')?'up':bias.startsWith('DOWN')?'down':'no');
+  $('biasText').textContent=bias;
+  $('confidenceText').textContent=`${Number(x.confidence||0).toFixed(1)}%`;
+  $('confidenceBar').style.width=`${Math.max(0,Math.min(100,Number(x.confidence||0)))}%`;
+  $('trendText').textContent=x.visual_trend||'--';
+  $('momentumText').textContent=x.momentum||'--';
+  $('volText').textContent=x.volatility||'--';
+  $('candlesText').textContent=x.detected_candles??'--';
+  $('qualityText').textContent=`${Number(x.image_quality_score||0).toFixed(0)}/100`;
+  $('engineText').textContent=x.engine||'Strategy V3';
+  $('strategyText').textContent=x.selected_strategy||'--';
+  $('strategyScoreText').textContent=`${Number(x.strategy_score||0).toFixed(0)}% ${x.strategy_direction&&x.strategy_direction!=='NONE'?'· '+x.strategy_direction:''}`;
+  $('confluenceText').textContent=`${Number(x.confluence_count||0)} confirmations`;
+  $('setupQualityText').textContent=x.setup_quality||'--';
+  $('strategyGrid').innerHTML=(x.strategy_signals||[]).length
+    ? (x.strategy_signals||[]).map(s=>`<div class="indicator"><b>${escapeHtml(s.name||'Strategy')} · ${escapeHtml(s.direction||'')}</b><span>${Number(s.score||0).toFixed(0)}% · ${escapeHtml(s.why||'')}</span></div>`).join('')
+    : '<div class="indicator"><b>No clean strategy</b><span>Wait for stronger confluence.</span></div>';
+  $('reasons').innerHTML=(x.reasons||[]).map(v=>`<li>${escapeHtml(v)}</li>`).join('');
+  const ws=x.warnings||[];
+  $('warnings').classList.toggle('hide',!ws.length);
+  $('warnings').innerHTML=ws.map(v=>`⚠ ${escapeHtml(v)}`).join('<br>');
+  $('indicatorGrid').innerHTML=Object.entries(x.indicator_status||{}).map(([k,v])=>`<div class="indicator"><b>${escapeHtml(k)}</b><span>${escapeHtml(v)}</span></div>`).join('');
+  $('resultCard').scrollIntoView({behavior:'smooth',block:'start'});
+}
 
 function openLogin(){openModal('loginModal')}function openTrial(){openModal('trialModal')}
 async function loginLicense(){const user=$('loginUser').value.trim(),key=$('loginKey').value.trim(),msg=$('loginMsg');msg.textContent='Checking...';try{const r=await fetch('/api/verify-license',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,user,device:deviceId,device_label:deviceLabel()})});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Login failed');localStorage.setItem('raja_scan_key',key);localStorage.setItem('raja_scan_user',user.toLowerCase());localStorage.setItem('raja_scan_token',j.session_token);msg.textContent=j.replaced_previous_device?'✅ Login successful. Previous device signed out.':'✅ Scanner unlocked.';setAccess(true,{...j,user});setTimeout(()=>closeModal('loginModal'),700)}catch(e){msg.textContent='❌ '+e.message}}
