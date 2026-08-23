@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageEnhance, ImageOps, UnidentifiedImageError
 
 try:
     import psycopg
@@ -797,12 +797,13 @@ def _candidate_chart_regions(arr: np.ndarray) -> list[tuple[str, np.ndarray]]:
             out.append((name, arr[y1:y2, x1:x2]))
     return out
 
-def analyze_chart_image(raw: bytes) -> dict[str, Any]:
-    """V9 pure price-action/pattern scan from a chart image.
+def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", last_outcome: str = "") -> dict[str, Any]:
+    """V10: strict SK Trading Club Pattern Type 1-25 scanner.
 
-    No RSI, EMA, MACD, stochastic, Bollinger or other indicator values are used.
-    The engine evaluates visible candle geometry and a small set of chart-pattern
-    contexts. A weak/conflicting setup returns NO TRADE.
+    The older V9 candlestick/chart-pattern library is intentionally removed from
+    signal decisions. This engine only evaluates the 25 user-supplied setup
+    types, visible candle body/wick geometry and the level/trend context required
+    by those setups. No RSI/EMA/MACD/Stochastic/Bollinger values are calculated.
     """
     try:
         image = Image.open(io.BytesIO(raw))
@@ -814,25 +815,44 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
     if w0 < 240 or h0 < 180:
         raise ValueError("Image is too small. Use a clearer chart screenshot.")
 
+    tf = str(timeframe or "1m").strip().lower()
+    market_name = str(market or "").strip()
+    previous_outcome = str(last_outcome or "").strip().upper()
+
     max_dim = 1800.0 if h0 > w0 * 1.12 else 1600.0
     scale = min(1.0, max_dim / max(w0, h0))
     if scale < 1.0:
         image = image.resize((max(1, int(w0 * scale)), max(1, int(h0 * scale))), Image.Resampling.LANCZOS)
-    arr = np.asarray(image, dtype=np.uint8)
+
+    # Keep the V9.4 AI Lens server fallback: original + one gentle colour recovery.
+    image_variants: list[tuple[str, Image.Image]] = [("raw", image)]
+    try:
+        enhanced = ImageOps.autocontrast(image, cutoff=1)
+        enhanced = ImageEnhance.Color(enhanced).enhance(1.18)
+        enhanced = ImageEnhance.Contrast(enhanced).enhance(1.07)
+        enhanced = ImageEnhance.Sharpness(enhanced).enhance(1.08)
+        image_variants.append(("ai-lens", enhanced))
+    except Exception:
+        pass
 
     best_region = None
     best_region_score = -1e9
-    for crop_name, candidate in _candidate_chart_regions(arr):
-        cands, q, qnotes, span, density = _detect_candles_in_chart(candidate)
-        score = min(len(cands), 60) * 3.2 + min(1.0, span / 0.55) * 34.0 + min(18.0, density * 900.0) + q * 0.16
-        if len(cands) < 6:
-            score -= 22.0
-        if score > best_region_score:
-            best_region_score = score
-            best_region = (crop_name, candidate, cands, q, qnotes)
+    fallback_arr = np.asarray(image, dtype=np.uint8)
+    for variant_name, variant_image in image_variants:
+        variant_arr = np.asarray(variant_image, dtype=np.uint8)
+        for crop_name, candidate in _candidate_chart_regions(variant_arr):
+            cands, q, qnotes, span, density = _detect_candles_in_chart(candidate)
+            score = min(len(cands), 60) * 3.2 + min(1.0, span / 0.55) * 34.0 + min(18.0, density * 900.0) + q * 0.16
+            if len(cands) < 6:
+                score -= 22.0
+            if variant_name == "raw":
+                score += 0.6
+            if score > best_region_score:
+                best_region_score = score
+                best_region = (f"{variant_name}:{crop_name}", candidate, cands, q, qnotes)
 
     if best_region is None:
-        crop_name, chart = "full-image", arr
+        crop_name, chart = "raw:full-image", fallback_arr
         candles, quality, quality_notes, _, _ = _detect_candles_in_chart(chart)
     else:
         crop_name, chart, candles, quality, quality_notes = best_region
@@ -841,9 +861,9 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
     count = len(candles)
     warnings = list(quality_notes)
     reasons: list[str] = []
+    library = "SK Trading Club Pattern Type 1-25"
 
-    def legacy_aliases(pattern: str, direction: str, score: float, signals: list[dict[str, Any]], library: str, size: int) -> dict[str, Any]:
-        # Keep old field names so the V8 history/timer code continues to work.
+    def legacy_aliases(pattern: str, direction: str, score: float, signals: list[dict[str, Any]], size: int = 25) -> dict[str, Any]:
         return {
             "selected_strategy": pattern,
             "strategy_direction": direction,
@@ -855,239 +875,415 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
 
     if count < 6:
         warnings.append("Not enough candle structure was detected. Move closer to the chart and keep candles sharp.")
-        library = "Candlestick + Price Action Pattern Library V9"
         return {
             "bias": "NO TRADE", "confidence": 0.0, "image_quality_score": quality,
-            "detected_candles": count, "visual_trend": "UNREADABLE", "momentum": "UNREADABLE", "volatility": "UNKNOWN",
-            "selected_pattern": "NO CLEAN PATTERN", "pattern_direction": "NONE", "pattern_score": 0.0,
-            "pattern_signals": [], "pattern_library": library, "pattern_library_size": 29,
-            "confluence_count": 0, "setup_quality": "LOW",
-            "reasons": ["Insufficient readable candle structure for pattern recognition."], "warnings": warnings,
-            "pattern_status": {"Candle geometry": "Unreadable", "Pattern context": "Unreadable"},
-            "engine": "RAJA Pattern-Only Engine V9.1 · Candle Count Fix + V8 Scan Gate", "analysis_crop_mode": crop_name,
-            **legacy_aliases("NO CLEAN PATTERN", "NONE", 0.0, [], library, 29),
+            "detected_candles": count, "visual_trend": "UNREADABLE", "momentum": "PATTERN TYPE 1-25", "volatility": "NOT USED",
+            "selected_pattern": "NO TYPE 1-25 SETUP", "pattern_direction": "NONE", "pattern_score": 0.0,
+            "pattern_signals": [], "pattern_library": library, "pattern_library_size": 25,
+            "confluence_count": 0, "setup_quality": "LOW", "next_candle_color": "NONE",
+            "entry_instruction": "WAIT FOR A COMPLETE SETUP", "recovery_trade": False,
+            "latest_candle_direction": "UNKNOWN",
+            "reasons": ["Insufficient readable candle structure for Pattern Type 1-25 recognition."], "warnings": warnings,
+            "pattern_status": {"Candle geometry": "Unreadable", "Pattern library": "Type 1-25 only"},
+            "engine": "RAJA V10 · SK 25 Setup Engine + V9.4 AI Lens + Scan Gate", "analysis_crop_mode": crop_name,
+            **legacy_aliases("NO TYPE 1-25 SETUP", "NONE", 0.0, []),
         }
 
-    ys = np.array([c["y"] for c in candles], dtype=float)
-    dirs = np.array([c["dir"] for c in candles], dtype=float)
-    ranges = np.array([c["range"] for c in candles], dtype=float)
+    ranges = np.array([float(c["range"]) for c in candles], dtype=float)
+    bodies = np.array([float(c["body_height"]) for c in candles], dtype=float)
+    med_range = float(np.median(ranges[-min(count, 24):])) if count else 8.0
+    med_body = float(np.median(bodies[-min(count, 24):])) if count else 5.0
+    tol = max(2.0, med_range * 0.18)
 
     def trend_before(end_idx: int, lookback: int = 7) -> float:
         start = max(0, end_idx - lookback)
-        seq = candles[start:end_idx]
-        if len(seq) < 3:
+        seq0 = candles[start:end_idx]
+        if len(seq0) < 3:
             return 0.0
-        yv = np.array([c["y"] for c in seq], dtype=float) / max(ch, 1)
-        xv = np.arange(len(seq), dtype=float)
-        slope = float(np.polyfit(xv, yv, 1)[0]) if len(seq) > 1 else 0.0
-        # Positive means bullish/uptrend; screen Y falls when price rises.
+        yv = np.array([c["y"] for c in seq0], dtype=float) / max(ch, 1)
+        xv = np.arange(len(seq0), dtype=float)
+        slope = float(np.polyfit(xv, yv, 1)[0]) if len(seq0) > 1 else 0.0
         return float(np.clip(-slope * 18.0, -1.0, 1.0))
 
-    def body_contains(a: dict[str, Any], b: dict[str, Any], tol: float = 2.0) -> bool:
-        return a["body_top"] <= b["body_top"] + tol and a["body_bottom"] >= b["body_bottom"] - tol
+    def seq_is(seq0: list[dict[str, Any]], dirs0: list[int]) -> bool:
+        return len(seq0) == len(dirs0) and all(int(c["dir"]) == d for c, d in zip(seq0, dirs0))
 
-    def small_body(c: dict[str, Any]) -> float:
-        return float(np.clip((0.38 - c["body_ratio"]) / 0.30, 0.0, 1.0))
+    def is_normal(c: dict[str, Any]) -> bool:
+        # "Normal body" in the source is visual, not a fixed percentage. Keep
+        # this tolerant because phone anti-aliasing can make a thin wick merge
+        # into the detected body. Sequence/level rules still provide the guard.
+        bh = float(c["body_height"])
+        return float(c["body_ratio"]) >= 0.28 and bh >= max(2.0, med_body * 0.45) and bh <= med_body * 2.20
 
-    signals: list[dict[str, Any]] = []
-    def add_pattern(name: str, direction: int, score: float, why: str, family: str = "Candlestick") -> None:
-        score = float(np.clip(score, 0.0, 1.0))
-        if score < 0.46:
-            return
-        signals.append({"name": name, "direction": "UP" if direction > 0 else "DOWN", "score": round(score * 100.0, 1), "why": why, "family": family})
+    def is_small(c: dict[str, Any]) -> bool:
+        return float(c["body_ratio"]) <= 0.30 or float(c["body_height"]) <= max(2.0, med_body * 0.52)
 
-    # ---------- Single-candle patterns from the newest candle ----------
-    c = candles[-1]
-    ctx = trend_before(len(candles) - 1)
-    rng = max(c["range"], 1.0)
-    body = max(c["body_height"], 1.0)
-    upper_r = c["upper_wick"] / rng
-    lower_r = c["lower_wick"] / rng
-    body_r = c["body_ratio"]
-    doji = body_r <= 0.24
+    def is_long(c: dict[str, Any]) -> bool:
+        return float(c["body_ratio"]) >= 0.66 and float(c["body_height"]) >= max(4.0, med_body * 1.28)
 
-    hammer_shape = min(1.0, lower_r / 0.52) * 0.50 + min(1.0, max(0.0, 0.46 - body_r) / 0.34) * 0.24 + min(1.0, max(0.0, 0.24 - upper_r) / 0.24) * 0.12
-    upper_pin_shape = min(1.0, upper_r / 0.52) * 0.50 + min(1.0, max(0.0, 0.46 - body_r) / 0.34) * 0.24 + min(1.0, max(0.0, 0.24 - lower_r) / 0.24) * 0.12
-    add_pattern("Hammer", 1, hammer_shape + max(0.0, -ctx) * 0.14, "Long lower wick with a small body after bearish/downward context.")
-    add_pattern("Hanging Man", -1, hammer_shape + max(0.0, ctx) * 0.14, "Hammer-like candle appears after bullish/upward context, warning of rejection.")
-    add_pattern("Inverted Hammer", 1, upper_pin_shape + max(0.0, -ctx) * 0.14, "Long upper wick and small body after bearish/downward context.")
-    add_pattern("Shooting Star", -1, upper_pin_shape + max(0.0, ctx) * 0.14, "Long upper wick and small body after bullish/upward context.")
+    def is_marubozu(c: dict[str, Any]) -> bool:
+        return is_long(c) and (float(c["upper_wick"]) + float(c["lower_wick"])) <= max(3.0, float(c["body_height"]) * 0.42)
 
-    if doji:
-        dragon = min(1.0, lower_r / 0.60) * 0.62 + min(1.0, max(0.0, 0.20 - upper_r) / 0.20) * 0.18 + max(0.0, -ctx) * 0.20
-        grave = min(1.0, upper_r / 0.60) * 0.62 + min(1.0, max(0.0, 0.20 - lower_r) / 0.20) * 0.18 + max(0.0, ctx) * 0.20
-        add_pattern("Dragonfly Doji", 1, dragon, "Doji-like body with dominant lower wick near bearish/downward context.")
-        add_pattern("Gravestone Doji", -1, grave, "Doji-like body with dominant upper wick near bullish/upward context.")
+    def long_lower(c: dict[str, Any]) -> bool:
+        return float(c["lower_wick"]) >= max(3.0, float(c["body_height"]) * 0.68, med_range * 0.20)
 
-    # ---------- Two-candle patterns ----------
-    if count >= 2:
-        a, b = candles[-2], candles[-1]
-        ctx2 = trend_before(len(candles) - 2)
-        tol = max(2.0, float(np.median(ranges[-min(count, 20):])) * 0.10)
-        engulf = body_contains(b, a, tol)
-        harami = body_contains(a, b, tol) and b["body_height"] <= a["body_height"] * 0.82
-        size_edge = min(1.0, b["body_height"] / max(a["body_height"], 1.0) / 1.25)
+    def long_upper(c: dict[str, Any]) -> bool:
+        return float(c["upper_wick"]) >= max(3.0, float(c["body_height"]) * 0.68, med_range * 0.20)
 
-        if a["dir"] < 0 and b["dir"] > 0:
-            add_pattern("Bullish Engulfing", 1, (0.58 if engulf else 0.0) + size_edge * 0.22 + max(0.0, -ctx2) * 0.20, "Bullish body visually engulfs the preceding bearish body.")
-            add_pattern("Bullish Harami", 1, (0.62 if harami else 0.0) + max(0.0, -ctx2) * 0.22 + small_body(b) * 0.16, "Small bullish body sits inside a larger bearish body after downward context.")
-            midpoint = (a["body_top"] + a["body_bottom"]) / 2.0
-            piercing_depth = float(np.clip((midpoint - b["close_y"]) / max(a["body_height"] * 0.50, 1.0), 0.0, 1.0))
-            add_pattern("Piercing Line", 1, piercing_depth * 0.62 + max(0.0, -ctx2) * 0.22 + min(1.0, b["body_ratio"] / 0.55) * 0.16, "Bullish candle closes deeply into the preceding bearish body.")
-        if a["dir"] > 0 and b["dir"] < 0:
-            add_pattern("Bearish Engulfing", -1, (0.58 if engulf else 0.0) + size_edge * 0.22 + max(0.0, ctx2) * 0.20, "Bearish body visually engulfs the preceding bullish body.")
-            add_pattern("Bearish Harami", -1, (0.62 if harami else 0.0) + max(0.0, ctx2) * 0.22 + small_body(b) * 0.16, "Small bearish body sits inside a larger bullish body after upward context.")
-            midpoint = (a["body_top"] + a["body_bottom"]) / 2.0
-            cloud_depth = float(np.clip((b["close_y"] - midpoint) / max(a["body_height"] * 0.50, 1.0), 0.0, 1.0))
-            add_pattern("Dark Cloud Cover", -1, cloud_depth * 0.62 + max(0.0, ctx2) * 0.22 + min(1.0, b["body_ratio"] / 0.55) * 0.16, "Bearish candle closes deeply into the preceding bullish body.")
+    def close_breaks_above(c: dict[str, Any], level_y: float, margin: float = 0.22) -> bool:
+        return float(c["close_y"]) < float(level_y) - tol * margin
 
-        bottom_tol = max(3.0, float(np.median(ranges[-min(20, count):])) * 0.14)
-        if a["dir"] < 0 and b["dir"] > 0 and abs(a["bottom"] - b["bottom"]) <= bottom_tol:
-            add_pattern("Tweezer Bottom", 1, 0.60 + max(0.0, -ctx2) * 0.25 + min(0.15, b["lower_wick"] / max(b["range"], 1.0) * 0.25), "Two recent candles reject a similar visual low.")
-        if a["dir"] > 0 and b["dir"] < 0 and abs(a["top"] - b["top"]) <= bottom_tol:
-            add_pattern("Tweezer Top", -1, 0.60 + max(0.0, ctx2) * 0.25 + min(0.15, b["upper_wick"] / max(b["range"], 1.0) * 0.25), "Two recent candles reject a similar visual high.")
+    def close_breaks_below(c: dict[str, Any], level_y: float, margin: float = 0.22) -> bool:
+        return float(c["close_y"]) > float(level_y) + tol * margin
 
-    # ---------- Three-candle patterns ----------
+    def body_inside(inner: dict[str, Any], outer: dict[str, Any], extra: float = 0.0) -> bool:
+        return float(inner["body_top"]) >= float(outer["body_top"]) - extra and float(inner["body_bottom"]) <= float(outer["body_bottom"]) + extra
+
+    is_otc = "OTC" in market_name.upper()
+    is_live = "LIVE" in market_name.upper()
+    global_trend = trend_before(len(candles), min(10, count))
+    context_label = "UPTREND" if global_trend > 0.13 else "DOWNTREND" if global_trend < -0.13 else "SIDEWAYS/MIXED"
+
+    exact: list[dict[str, Any]] = []
+    near: list[dict[str, Any]] = []
+
+    def add_setup(type_no: int, direction: int, rules: list[tuple[str, bool]], setup: str, why: str,
+                  *, family: str = "Candle Sequence", recovery: bool = False, timeframe_rule: str = "ANY") -> None:
+        matched = sum(1 for _, ok in rules if ok)
+        total = max(1, len(rules))
+        pct = round(100.0 * matched / total, 1)
+        priority_map = {1:120, 2:105, 3:120, 4:115, 5:125, 6:170, 7:80, 8:80, 9:145, 10:145, 11:160, 12:165, 13:175, 14:150, 15:170, 16:75, 17:75, 18:155, 19:155, 20:145, 21:145, 22:155, 23:155, 24:180, 25:175}
+        item = {
+            "name": f"Pattern Type {type_no}",
+            "priority": priority_map.get(type_no, 100),
+            "pattern_type": type_no,
+            "direction": "UP" if direction > 0 else "DOWN",
+            "next_candle": "GREEN" if direction > 0 else "RED",
+            "score": pct,
+            "why": why,
+            "setup": setup,
+            "family": family,
+            "rules_matched": matched,
+            "rules_total": total,
+            "rules": [{"name": name, "ok": bool(ok)} for name, ok in rules],
+            "recovery_trade": bool(recovery),
+            "timeframe_rule": timeframe_rule,
+        }
+        if matched == total:
+            exact.append(item)
+        elif pct >= 50.0:
+            near.append(item)
+
+    # TYPE 1 - OTC 9-candle sequence: 8 same-colour setup candles -> next same colour.
+    if count >= 8:
+        last8 = candles[-8:]
+        add_setup(1, 1, [("OTC market", is_otc), ("8 back-to-back GREEN candles", all(c["dir"] > 0 for c in last8))],
+                  "8 GREEN candles in OTC", "After 8 consecutive green setup candles, the strategy targets the next candle GREEN.", timeframe_rule="OTC ONLY")
+        add_setup(1, -1, [("OTC market", is_otc), ("8 back-to-back RED candles", all(c["dir"] < 0 for c in last8))],
+                  "8 RED candles in OTC", "After 8 consecutive red setup candles, the strategy targets the next candle RED.", timeframe_rule="OTC ONLY")
+
+    # TYPE 2 - 2 green + first red at respected resistance -> next red.
     if count >= 3:
-        a, b, c3 = candles[-3], candles[-2], candles[-1]
-        ctx3 = trend_before(len(candles) - 3)
-        mid_a = (a["body_top"] + a["body_bottom"]) / 2.0
-        morning = a["dir"] < 0 and small_body(b) > 0.35 and c3["dir"] > 0 and c3["close_y"] < mid_a
-        evening = a["dir"] > 0 and small_body(b) > 0.35 and c3["dir"] < 0 and c3["close_y"] > mid_a
-        add_pattern("Morning Doji Star" if b["body_ratio"] <= 0.24 else "Morning Star", 1, (0.66 if morning else 0.0) + max(0.0, -ctx3) * 0.22 + min(0.12, c3["body_ratio"] * 0.18), "Bearish move pauses with a small middle candle, then a strong bullish response.")
-        add_pattern("Evening Doji Star" if b["body_ratio"] <= 0.24 else "Evening Star", -1, (0.66 if evening else 0.0) + max(0.0, ctx3) * 0.22 + min(0.12, c3["body_ratio"] * 0.18), "Bullish move pauses with a small middle candle, then a strong bearish response.")
+        a, b, c = candles[-3:]
+        resistance_touch = abs(float(a["top"]) - float(b["top"])) <= tol * 1.55
+        reversal = c["dir"] < 0 and float(c["close_y"]) > float(b["open_y"]) - tol * 0.25
+        add_setup(2, -1, [("GREEN, GREEN, RED setup", seq_is([a,b,c],[1,1,-1])), ("Recent highs respect one resistance area", resistance_touch), ("First RED shows reversal", reversal)],
+                  "2 GREEN + first RED at resistance", "Resistance is respected and the first red reversal candle is present; the strategy targets the following candle RED.", family="Resistance")
 
-        if all(x["dir"] > 0 for x in (a,b,c3)):
-            closes = [a["close_y"], b["close_y"], c3["close_y"]]
-            progressive = closes[2] < closes[1] < closes[0]
-            score = (0.64 if progressive else 0.48) + min(0.20, float(np.mean([a["body_ratio"],b["body_ratio"],c3["body_ratio"]])) * 0.25) + max(0.0, -ctx3) * 0.12
-            add_pattern("Three White Soldiers", 1, score, "Three bullish candles advance progressively higher.")
-        if all(x["dir"] < 0 for x in (a,b,c3)):
-            closes = [a["close_y"], b["close_y"], c3["close_y"]]
-            progressive = closes[2] > closes[1] > closes[0]
-            score = (0.64 if progressive else 0.48) + min(0.20, float(np.mean([a["body_ratio"],b["body_ratio"],c3["body_ratio"]])) * 0.25) + max(0.0, ctx3) * 0.12
-            add_pattern("Three Black Crows", -1, score, "Three bearish candles advance progressively lower.")
+    # TYPE 3 - sideways G-R-G; 3rd green lower wick breaks down -> next red.
+    if count >= 3:
+        a, b, c = candles[-3:]
+        wick_break_down = c["dir"] > 0 and float(c["bottom"]) > max(float(a["bottom"]), float(b["bottom"])) + tol * 0.20 and long_lower(c)
+        add_setup(3, -1, [("GREEN, RED, GREEN setup", seq_is([a,b,c],[1,-1,1])), ("3rd GREEN wick breaks below prior lows", wick_break_down), ("Sideways/mixed context", abs(global_trend) < 0.60)],
+                  "GREEN - RED - GREEN with downside wick break", "The third green candle sweeps below the prior lows; the strategy targets the next candle RED.", family="Sideways")
 
-        tol = max(2.0, float(np.median(ranges[-min(count, 20):])) * 0.10)
-        first_inside = body_contains(a, b, tol) and b["body_height"] < a["body_height"]
-        first_engulf = body_contains(b, a, tol)
-        if a["dir"] < 0 and b["dir"] > 0 and first_inside and c3["dir"] > 0 and c3["close_y"] < b["close_y"]:
-            add_pattern("Three Inside Up", 1, 0.74 + max(0.0, -ctx3) * 0.18, "Bullish harami-style inside setup receives a third-candle upside confirmation.")
-        if a["dir"] > 0 and b["dir"] < 0 and first_inside and c3["dir"] < 0 and c3["close_y"] > b["close_y"]:
-            add_pattern("Three Inside Down", -1, 0.74 + max(0.0, ctx3) * 0.18, "Bearish harami-style inside setup receives a third-candle downside confirmation.")
-        if a["dir"] < 0 and b["dir"] > 0 and first_engulf and c3["dir"] > 0 and c3["close_y"] < b["close_y"]:
-            add_pattern("Three Outside Up", 1, 0.76 + max(0.0, -ctx3) * 0.16, "Bullish engulfing setup receives a third-candle upside confirmation.")
-        if a["dir"] > 0 and b["dir"] < 0 and first_engulf and c3["dir"] < 0 and c3["close_y"] > b["close_y"]:
-            add_pattern("Three Outside Down", -1, 0.76 + max(0.0, ctx3) * 0.16, "Bearish engulfing setup receives a third-candle downside confirmation.")
+    # TYPE 4 - RED long tail then GREEN; next green.
+    if count >= 2:
+        a, b = candles[-2:]
+        tail_vs_head = float(a["lower_wick"]) > max(float(b["upper_wick"]) * 1.12, med_range * 0.18)
+        add_setup(4, 1, [("RED then GREEN", seq_is([a,b],[-1,1])), ("1st RED tail is long", long_lower(a)), ("RED tail longer than GREEN head", tail_vs_head)],
+                  "RED long-tail + GREEN", "The first red candle has the required long tail relative to the green candle head; the strategy targets the next candle GREEN.")
 
-    # ---------- Price-action / chart context patterns from the uploaded guides ----------
-    if count >= 10:
-        prior = candles[-12:-2] if count >= 12 else candles[:-2]
-        if len(prior) >= 5:
-            resistance_y = float(min(x["top"] for x in prior))
-            support_y = float(max(x["bottom"] for x in prior))
-            span = max(10.0, support_y - resistance_y)
-            last = candles[-1]
-            near_support = 1.0 - min(1.0, abs(last["bottom"] - support_y) / max(span * 0.16, 2.0))
-            near_resistance = 1.0 - min(1.0, abs(last["top"] - resistance_y) / max(span * 0.16, 2.0))
-            wick_low = min(1.0, last["lower_wick"] / max(last["body_height"] * 1.6, 1.0))
-            wick_high = min(1.0, last["upper_wick"] / max(last["body_height"] * 1.6, 1.0))
-            add_pattern("Support Rejection", 1, near_support * 0.46 + wick_low * 0.34 + (0.20 if last["dir"] > 0 else 0.0), "Newest candle rejects a recent visual support area.", "Price Action")
-            add_pattern("Resistance Rejection", -1, near_resistance * 0.46 + wick_high * 0.34 + (0.20 if last["dir"] < 0 else 0.0), "Newest candle rejects a recent visual resistance area.", "Price Action")
+    # TYPE 5 - R,R with long tails; 2nd red head does not break 1st; then G -> next R.
+    if count >= 3:
+        a, b, c = candles[-3:]
+        no_head_break = float(b["top"]) >= float(a["top"]) - tol * 0.35
+        add_setup(5, -1, [("RED, RED, GREEN setup", seq_is([a,b,c],[-1,-1,1])), ("First two RED tails are long", long_lower(a) and long_lower(b)), ("2nd RED head does not break 1st RED", no_head_break), ("Sideways/mixed context", abs(global_trend) < 0.68)],
+                  "2 long-tail RED + GREEN", "The two red candles keep the required wick/level structure and a green setup candle follows; the strategy targets the next candle RED.", family="Sideways")
 
-            # Breakout + retest: previous candle breaches the old boundary, latest returns near it and responds.
-            prev = candles[-2]
-            buffer_px = max(2.0, span * 0.05)
-            up_breach = prev["close_y"] < resistance_y - buffer_px
-            dn_breach = prev["close_y"] > support_y + buffer_px
-            retest_res = 1.0 - min(1.0, abs(last["y"] - resistance_y) / max(span * 0.18, 2.0))
-            retest_sup = 1.0 - min(1.0, abs(last["y"] - support_y) / max(span * 0.18, 2.0))
-            add_pattern("Breakout & Retest", 1, (0.52 if up_breach else 0.0) + retest_res * 0.28 + (0.20 if last["dir"] > 0 else 0.0), "Upside breakout is followed by a visual retest/hold of the old resistance area.", "Chart Pattern")
-            add_pattern("Breakout & Retest", -1, (0.52 if dn_breach else 0.0) + retest_sup * 0.28 + (0.20 if last["dir"] < 0 else 0.0), "Downside breakout is followed by a visual retest/hold of the old support area.", "Chart Pattern")
+    # TYPE 6 - recovery sequence only after a recorded loss.
+    if count >= 3:
+        a, b, c = candles[-3:]
+        add_setup(6, -1, [("Previous trade marked LOSS", previous_outcome == "LOSS"), ("RED, GREEN, RED setup", seq_is([a,b,c],[-1,1,-1]))],
+                  "Recovery: RED - GREEN - RED", "This setup is enabled only after the previous trade is recorded as a loss; the strategy targets the next candle RED.", family="Recovery", recovery=True, timeframe_rule="AFTER LOSS ONLY")
 
-            # Double top/bottom approximation using repeated extremes in the latest window.
-            recent = candles[-16:] if count >= 16 else candles
-            sep = 3
-            bottoms = sorted([(float(x["bottom"]), i) for i,x in enumerate(recent)], reverse=True)
-            tops = sorted([(float(x["top"]), i) for i,x in enumerate(recent)])
-            for arr_ext, direction, name in ((bottoms, 1, "Double Bottom"), (tops, -1, "Double Top")):
-                found = None
-                for v1,i1 in arr_ext[:6]:
-                    for v2,i2 in arr_ext[:8]:
-                        if abs(i1-i2) < sep:
-                            continue
-                        if abs(v1-v2) <= max(4.0, span*0.10):
-                            found = (v1,v2,i1,i2); break
-                    if found: break
-                if found:
-                    confirm = 0.18 if (last["dir"] > 0 if direction > 0 else last["dir"] < 0) else 0.0
-                    add_pattern(name, direction, 0.58 + confirm + min(0.16, abs(trend_before(len(candles)-1))*0.16), f"Two separated tests formed near a similar visual {'low' if direction>0 else 'high'} with reversal response.", "Chart Pattern")
+    # TYPE 7 - R,G,G normal -> next red.
+    if count >= 3:
+        a, b, c = candles[-3:]
+        add_setup(7, -1, [("RED, GREEN, GREEN setup", seq_is([a,b,c],[-1,1,1])), ("Two GREEN candles have normal bodies", is_normal(b) and is_normal(c))],
+                  "RED + 2 normal GREEN", "After one red and two back-to-back normal-body green candles, the strategy targets the next candle RED.")
 
-    signals.sort(key=lambda s: float(s["score"]), reverse=True)
-    best = signals[0] if signals else None
-    best_score = float(best["score"]) if best else 0.0
-    up = [s for s in signals if s["direction"] == "UP" and float(s["score"]) >= 58.0]
-    down = [s for s in signals if s["direction"] == "DOWN" and float(s["score"]) >= 58.0]
-    up_vote = sum(float(s["score"]) for s in up)
-    down_vote = sum(float(s["score"]) for s in down)
-    direction = "UP" if up_vote > down_vote else "DOWN" if down_vote > up_vote else "NONE"
-    same = up if direction == "UP" else down if direction == "DOWN" else []
-    confluence = len(same)
-    opposite = down if direction == "UP" else up if direction == "DOWN" else []
-    strongest_opp = max([float(s["score"]) for s in opposite], default=0.0)
-    conflict = bool(best and strongest_opp >= max(65.0, best_score - 7.0))
+    # TYPE 8 - G,R,R normal -> next green.
+    if count >= 3:
+        a, b, c = candles[-3:]
+        add_setup(8, 1, [("GREEN, RED, RED setup", seq_is([a,b,c],[1,-1,-1])), ("Two RED candles have normal bodies", is_normal(b) and is_normal(c))],
+                  "GREEN + 2 normal RED", "After one green and two back-to-back normal-body red candles, the strategy targets the next candle GREEN.")
 
-    pattern_ok = bool(best and best_score >= 66.0)
-    confluence_ok = confluence >= 2 or best_score >= 84.0
-    structure_ok = count >= 10 and quality >= 45.0
-    no_trade = not (pattern_ok and confluence_ok and structure_ok and not conflict and direction != "NONE")
+    # TYPE 9 - 3 green + opposite red with long tail -> next green.
+    if count >= 4:
+        a,b,c,d = candles[-4:]
+        add_setup(9, 1, [("3 GREEN + 1 RED setup", seq_is([a,b,c,d],[1,1,1,-1])), ("Opposite RED has long tail", long_lower(d))],
+                  "GREEN, GREEN, GREEN + long-tail RED", "Three green candles are followed by the required opposite red long-tail setup candle; the strategy targets the NEXT candle GREEN.")
+
+    # TYPE 10 - 3 red + opposite green with long head -> next red.
+    if count >= 4:
+        a,b,c,d = candles[-4:]
+        add_setup(10, -1, [("3 RED + 1 GREEN setup", seq_is([a,b,c,d],[-1,-1,-1,1])), ("Opposite GREEN has long head", long_upper(d))],
+                  "RED, RED, RED + long-head GREEN", "Three red candles are followed by the required opposite green long-head setup candle; the strategy targets the NEXT candle RED.")
+
+    # TYPE 11 - 30s only: 3 normal red + green that does not break prior 3 -> next green.
+    if count >= 4:
+        a,b,c,d = candles[-4:]
+        prior_high = min(float(x["top"]) for x in (a,b,c))
+        no_break = float(d["top"]) >= prior_high - tol * 0.35
+        add_setup(11, 1, [("30-second timeframe", tf == "30s"), ("RED, RED, RED, GREEN setup", seq_is([a,b,c,d],[-1,-1,-1,1])), ("First 3 RED candles have normal bodies", all(is_normal(x) for x in (a,b,c))), ("GREEN does not break previous 3 RED highs", no_break)],
+                  "3 normal RED + contained GREEN", "On a 30-second chart, the green setup candle stays within the previous red structure; the strategy targets the next 30-second candle GREEN.", timeframe_rule="30S ONLY")
+
+    # TYPE 12 - 2m only: RR + GG contained under horizontal resistance -> next red.
+    if count >= 4:
+        a,b,c,d = candles[-4:]
+        resistance = min(float(a["top"]), float(b["top"]))
+        greens_contained = max(float(c["top"]), float(d["top"])) >= resistance - tol * 0.45 and float(c["top"]) >= resistance - tol * 0.45 and float(d["top"]) >= resistance - tol * 0.45
+        close_near = abs(float(d["close_y"]) - resistance) <= max(tol * 2.8, med_range * 0.65)
+        add_setup(12, -1, [("2-minute timeframe", tf == "2m"), ("RED, RED, GREEN, GREEN setup", seq_is([a,b,c,d],[-1,-1,1,1])), ("Normal body candles", all(is_normal(x) for x in (a,b,c,d))), ("GREEN candles do not break first RED resistance", greens_contained), ("Last GREEN stays near horizontal level", close_near)],
+                  "2 RED + 2 GREEN below horizontal resistance", "The 2-minute setup stays below the first red resistance area; the strategy targets the next 2-minute candle RED.", family="Horizontal Level", timeframe_rule="2M ONLY")
+
+    # TYPE 13 - 2m only: several resistance/support retests, breakout -> next opposite reversal.
+    if count >= 7:
+        prior = candles[-10:-1] if count >= 10 else candles[:-1]
+        last = candles[-1]
+        resistance = float(min(x["top"] for x in prior))
+        support = float(max(x["bottom"] for x in prior))
+        res_touches = sum(1 for x in prior if abs(float(x["top"]) - resistance) <= tol * 1.25)
+        sup_touches = sum(1 for x in prior if abs(float(x["bottom"]) - support) <= tol * 1.25)
+        up_break = last["dir"] > 0 and close_breaks_above(last, resistance, 0.28)
+        dn_break = last["dir"] < 0 and close_breaks_below(last, support, 0.28)
+        add_setup(13, -1, [("2-minute timeframe", tf == "2m"), ("Resistance retested several times", res_touches >= 2), ("Latest GREEN breaks resistance", up_break)],
+                  "Repeated resistance retest + upside breakout", "After several resistance retests, the breakout candle completes the setup; the strategy targets the next 2-minute candle RED.", family="Breakout Reversal", timeframe_rule="2M ONLY")
+        add_setup(13, 1, [("2-minute timeframe", tf == "2m"), ("Support retested several times", sup_touches >= 2), ("Latest RED breaks support", dn_break)],
+                  "Repeated support retest + downside breakout", "After several support retests, the breakdown candle completes the setup; the strategy targets the next 2-minute candle GREEN.", family="Breakout Reversal", timeframe_rule="2M ONLY")
+
+    # TYPE 14 - horizontal S/R break -> same direction next candle.
+    if count >= 5:
+        prior = candles[-9:-1] if count >= 9 else candles[:-1]
+        last = candles[-1]
+        greens = [x for x in prior if x["dir"] > 0]
+        reds = [x for x in prior if x["dir"] < 0]
+        support_pair = None
+        for i in range(len(greens)):
+            for j in range(i+1, len(greens)):
+                if abs(float(greens[i]["bottom"]) - float(greens[j]["bottom"])) <= tol * 1.25:
+                    support_pair = (greens[i], greens[j]); break
+            if support_pair: break
+        resistance_pair = None
+        for i in range(len(reds)):
+            for j in range(i+1, len(reds)):
+                if abs(float(reds[i]["top"]) - float(reds[j]["top"])) <= tol * 1.25:
+                    resistance_pair = (reds[i], reds[j]); break
+            if resistance_pair: break
+        if support_pair:
+            support = (float(support_pair[0]["bottom"]) + float(support_pair[1]["bottom"])) / 2.0
+            add_setup(14, -1, [("Two GREEN candles define support", True), ("Latest candle is RED", last["dir"] < 0), ("RED closes below support", close_breaks_below(last, support, 0.25))],
+                      "Horizontal support breakdown", "A red candle breaks the support created by two green candles; the strategy targets the next candle RED.", family="Horizontal Break")
+        if resistance_pair:
+            resistance = (float(resistance_pair[0]["top"]) + float(resistance_pair[1]["top"])) / 2.0
+            add_setup(14, 1, [("Two RED candles define resistance", True), ("Latest candle is GREEN", last["dir"] > 0), ("GREEN closes above resistance", close_breaks_above(last, resistance, 0.25))],
+                      "Horizontal resistance breakout", "A green candle breaks the resistance created by two red candles; the strategy targets the next candle GREEN.", family="Horizontal Break")
+
+    # TYPE 15 - V / inverted-V breakout, then opposite-direction target.
+    if count >= 7:
+        shape = candles[-7:-1]
+        last = candles[-1]
+        yv = np.array([float(x["y"]) for x in shape], dtype=float)
+        low_i = int(np.argmax(yv))
+        high_i = int(np.argmin(yv))
+        v_shape = 1 <= low_i <= len(shape)-2 and (yv[low_i]-yv[0]) >= med_range * 0.80 and (yv[low_i]-yv[-1]) >= med_range * 0.70
+        iv_shape = 1 <= high_i <= len(shape)-2 and (yv[0]-yv[high_i]) >= med_range * 0.80 and (yv[-1]-yv[high_i]) >= med_range * 0.70
+        v_level = min(float(shape[0]["top"]), float(shape[1]["top"]))
+        iv_level = max(float(shape[0]["bottom"]), float(shape[1]["bottom"]))
+        add_setup(15, -1, [("V shape formed", v_shape), ("Latest GREEN breaks horizontal top", last["dir"] > 0 and close_breaks_above(last, v_level, 0.18))],
+                  "V pattern + upside horizontal breakout", "The V completes and breaks the horizontal line; the strategy targets the next candle in the opposite direction: RED.", family="V Reversal")
+        add_setup(15, 1, [("Inverted-V shape formed", iv_shape), ("Latest RED breaks horizontal bottom", last["dir"] < 0 and close_breaks_below(last, iv_level, 0.18))],
+                  "Inverted V + downside horizontal breakout", "The inverted V completes and breaks the horizontal line; the strategy targets the next candle in the opposite direction: GREEN.", family="V Reversal")
+
+    # TYPE 16 - 3/4 green normal + 1 red -> next green.
+    if count >= 4 and candles[-1]["dir"] < 0:
+        run = 0
+        i = count - 2
+        while i >= 0 and candles[i]["dir"] > 0 and run < 5:
+            run += 1; i -= 1
+        setup_c = candles[count-run-1:count-1] if run else []
+        add_setup(16, 1, [("3 to 4 back-to-back GREEN candles", 3 <= run <= 4), ("GREEN bodies are normal", bool(setup_c) and all(is_normal(x) for x in setup_c)), ("One opposite RED setup candle", candles[-1]["dir"] < 0)],
+                  "3-4 normal GREEN + 1 RED", "The continuation setup is complete; the strategy targets the next candle GREEN.")
+
+    # TYPE 17 - 3/4 red normal + 1 green -> next red.
+    if count >= 4 and candles[-1]["dir"] > 0:
+        run = 0
+        i = count - 2
+        while i >= 0 and candles[i]["dir"] < 0 and run < 5:
+            run += 1; i -= 1
+        setup_c = candles[count-run-1:count-1] if run else []
+        add_setup(17, -1, [("3 to 4 back-to-back RED candles", 3 <= run <= 4), ("RED bodies are normal", bool(setup_c) and all(is_normal(x) for x in setup_c)), ("One opposite GREEN setup candle", candles[-1]["dir"] > 0)],
+                  "3-4 normal RED + 1 GREEN", "The continuation setup is complete; the strategy targets the next candle RED.")
+
+    # TYPE 18 - long red marubozu + GGG + R, no resistance break -> next red.
+    if count >= 5:
+        a,b,c,d,e = candles[-5:]
+        no_res_break = all(float(x["top"]) >= float(a["top"]) - tol * 0.30 for x in (b,c,d,e))
+        add_setup(18, -1, [("Long RED marubozu first candle", a["dir"] < 0 and is_marubozu(a)), ("Then GREEN, GREEN, GREEN, RED", seq_is([b,c,d,e],[1,1,1,-1])), ("Three GREEN candles have normal bodies", all(is_normal(x) for x in (b,c,d))), ("No wick/body breaks first RED resistance", no_res_break), ("Sideways/mixed context", abs(global_trend) < 0.72)],
+                  "Long RED + 3 GREEN + RED below resistance", "The entire four-candle response stays below the first long red resistance; the strategy targets the next candle RED.", family="Sideways Level")
+
+    # TYPE 19 - long green marubozu + RRR + G, no support break -> next green.
+    if count >= 5:
+        a,b,c,d,e = candles[-5:]
+        no_sup_break = all(float(x["bottom"]) <= float(a["bottom"]) + tol * 0.30 for x in (b,c,d,e))
+        add_setup(19, 1, [("Long GREEN marubozu first candle", a["dir"] > 0 and is_marubozu(a)), ("Then RED, RED, RED, GREEN", seq_is([b,c,d,e],[-1,-1,-1,1])), ("Three RED candles have normal bodies", all(is_normal(x) for x in (b,c,d))), ("No wick/body breaks first GREEN support", no_sup_break), ("Sideways/mixed context", abs(global_trend) < 0.72)],
+                  "Long GREEN + 3 RED + GREEN above support", "The entire four-candle response stays above the first long green support; the strategy targets the next candle GREEN.", family="Sideways Level")
+
+    # TYPE 20 - downtrend: R,R,G,R where 4th red does not break previous green -> next red.
+    if count >= 4:
+        a,b,c,d = candles[-4:]
+        no_green_breakdown = float(d["bottom"]) <= float(c["bottom"]) + tol * 0.35
+        add_setup(20, -1, [("Downtrend context", global_trend < -0.10), ("RED, RED, GREEN, RED setup", seq_is([a,b,c,d],[-1,-1,1,-1])), ("First two RED candles normal", is_normal(a) and is_normal(b)), ("4th RED does not break previous GREEN low", no_green_breakdown)],
+                  "Downtrend R-R-G-R hold", "The fourth red candle holds above the prior green low; the strategy targets the next candle RED.", family="Downtrend")
+
+    # TYPE 21 - uptrend: G,G,R,G where 4th green does not break previous red -> next green.
+    if count >= 4:
+        a,b,c,d = candles[-4:]
+        no_red_breakout = float(d["top"]) >= float(c["top"]) - tol * 0.35
+        add_setup(21, 1, [("Uptrend context", global_trend > 0.10), ("GREEN, GREEN, RED, GREEN setup", seq_is([a,b,c,d],[1,1,-1,1])), ("First two GREEN candles normal", is_normal(a) and is_normal(b)), ("4th GREEN does not break previous RED high", no_red_breakout)],
+                  "Uptrend G-G-R-G hold", "The fourth green candle stays below the prior red high; the strategy targets the next candle GREEN.", family="Uptrend")
+
+    # TYPE 22 - uptrend 3-5 green + small red contained in prior green body -> next green.
+    if count >= 4 and candles[-1]["dir"] < 0:
+        last = candles[-1]
+        run = 0; i = count - 2
+        while i >= 0 and candles[i]["dir"] > 0 and run < 6:
+            run += 1; i -= 1
+        greens = candles[count-run-1:count-1] if run else []
+        prev = candles[-2]
+        add_setup(22, 1, [("Uptrend context", global_trend > 0.08), ("3 to 5 back-to-back GREEN candles", 3 <= run <= 5), ("GREEN candles normal", bool(greens) and all(is_normal(x) for x in greens)), ("Opposite RED body smaller than previous GREEN", float(last["body_height"]) < float(prev["body_height"])), ("RED body does not break previous GREEN body", float(last["body_bottom"]) <= float(prev["body_bottom"]) + tol * 0.28)],
+                  "3-5 GREEN + smaller contained RED", "The small red pullback stays within the prior green body; the strategy targets the next candle GREEN.", family="Uptrend")
+
+    # TYPE 23 - downtrend 3-5 red + small green contained in prior red body -> next red.
+    if count >= 4 and candles[-1]["dir"] > 0:
+        last = candles[-1]
+        run = 0; i = count - 2
+        while i >= 0 and candles[i]["dir"] < 0 and run < 6:
+            run += 1; i -= 1
+        reds = candles[count-run-1:count-1] if run else []
+        prev = candles[-2]
+        add_setup(23, -1, [("Downtrend context", global_trend < -0.08), ("3 to 5 back-to-back RED candles", 3 <= run <= 5), ("RED candles normal", bool(reds) and all(is_normal(x) for x in reds)), ("Opposite GREEN body smaller than previous RED", float(last["body_height"]) < float(prev["body_height"])), ("GREEN body does not break previous RED body", float(last["body_top"]) >= float(prev["body_top"]) - tol * 0.28)],
+                  "3-5 RED + smaller contained GREEN", "The small green pullback stays within the prior red body; the strategy targets the next candle RED.", family="Downtrend")
+
+    # TYPE 24 - live market sideways: G,R,R(small),G,R(smaller) -> next green, SNR respected.
+    if count >= 5:
+        a,b,c,d,e = candles[-5:]
+        snr = (float(a["top"]) + float(b["top"])) / 2.0
+        snr_respected = all(float(x["top"]) >= snr - tol * 0.40 for x in (a,b,c,d,e))
+        add_setup(24, 1, [("LIVE market", is_live), ("GREEN, RED, RED, GREEN, RED setup", seq_is([a,b,c,d,e],[1,-1,-1,1,-1])), ("First GREEN and second RED maintain SNR", abs(float(a["top"])-float(b["top"])) <= tol * 1.45), ("3rd RED is Doji/small body", is_small(c)), ("4th GREEN does not break SNR", float(d["top"]) >= snr - tol * 0.40), ("5th RED body smaller than previous GREEN", float(e["body_height"]) < float(d["body_height"])), ("No setup candle breaks SNR", snr_respected), ("Sideways/mixed context", abs(global_trend) < 0.72)],
+                  "LIVE sideways G-R-smallR-G-smallR at SNR", "All five live-market SNR conditions are present; the strategy targets the next candle GREEN.", family="Live SNR", timeframe_rule="LIVE MARKET ONLY")
+
+    # TYPE 25 - small red, normal red, long green breaks first red SNR -> next green.
+    if count >= 3:
+        a,b,c = candles[-3:]
+        snr = float(a["top"])
+        add_setup(25, 1, [("RED, RED, GREEN setup", seq_is([a,b,c],[-1,-1,1])), ("1st RED is small/Doji", is_small(a)), ("2nd RED has normal body", is_normal(b)), ("3rd GREEN is long", is_long(c)), ("Long GREEN breaks 1st RED SNR", close_breaks_above(c, snr, 0.20))],
+                  "Small RED + normal RED + long GREEN SNR breakout", "The long green candle breaks the SNR level created by the first small red candle; the strategy targets the next candle GREEN.", family="SNR Breakout")
+
+    # Exact setups win over near matches. More specific rule sets win ties.
+    exact.sort(key=lambda s: (int(s.get("priority") or 0), int(s["rules_total"]), int(s["pattern_type"])), reverse=True)
+    near.sort(key=lambda s: (float(s["score"]), int(s["rules_total"])), reverse=True)
+    best = exact[0] if exact else None
+    best_near = near[0] if near else None
 
     if best:
-        reasons.append(f"Best pattern: {best['name']} ({best['direction']}) at {best_score:.0f}% visual pattern score.")
-    if confluence:
-        reasons.append(f"{confluence} pattern confirmations agree on {direction}.")
-    if conflict:
-        reasons.append("A strong opposite-direction pattern is also present, so the signal is blocked.")
-    if not pattern_ok:
-        reasons.append("No current pattern reached the minimum pattern threshold.")
-    elif not confluence_ok:
-        reasons.append("The pattern needs another confirmation; waiting is preferred.")
-
-    if no_trade:
-        bias = "NO TRADE"
-        confidence = min(68.0, round(best_score * 0.72 + quality * 0.10 + min(confluence,3) * 2.0, 1)) if best else 0.0
+        direction = str(best["direction"])
+        next_color = str(best["next_candle"])
+        bias = "UP SIGNAL" if direction == "UP" else "DOWN SIGNAL"
+        # 100% means every coded source rule for this setup matched; it is not a profit probability.
+        match_score = 100.0
+        setup_quality = "HIGH" if quality >= 72 else "MEDIUM"
+        selected = str(best["name"])
+        reasons.extend([
+            f"{selected} exact setup matched: {best['rules_matched']}/{best['rules_total']} coded rules.",
+            f"Strategy target: NEXT candle {next_color} ({direction}). Entry alert is for the next candle open after setup confirmation.",
+        ])
+        if best.get("recovery_trade"):
+            reasons.append("RECOVERY TRADE: Pattern Type 6 is active because the previous trade is recorded as LOSS.")
+        confidence = match_score
+        selected_dir = direction
+        signals_out = exact[:8]
     else:
-        bias = "UP BIAS" if direction == "UP" else "DOWN BIAS"
-        confidence = round(min(94.0, 45.0 + best_score * 0.36 + min(confluence,4) * 4.0 + quality * 0.08), 1)
+        bias = "NO TRADE"
+        next_color = "NONE"
+        selected_dir = "NONE"
+        setup_quality = "LOW"
+        if best_near:
+            selected = f"WATCH: {best_near['name']}"
+            match_score = float(best_near["score"])
+            reasons.append(f"No exact Type 1-25 setup yet. Closest is {best_near['name']} with {best_near['rules_matched']}/{best_near['rules_total']} rules currently visible.")
+        else:
+            selected = "NO TYPE 1-25 SETUP"
+            match_score = 0.0
+            reasons.append("No exact Pattern Type 1-25 setup is complete on the newest readable candles.")
+        reasons.append("No directional entry is armed until every required rule for one strategy setup is present.")
+        confidence = match_score
+        signals_out = near[:8]
 
-    setup_quality = "HIGH" if not no_trade and best_score >= 80 and confluence >= 2 and quality >= 65 else "MEDIUM" if not no_trade else "LOW"
-    selected = best["name"] if best else "NO CLEAN PATTERN"
-    selected_dir = best["direction"] if best else "NONE"
-    library = "Candlestick + Price Action Pattern Library V9"
-
-    # Context is used only to validate candle patterns; no technical indicator values are calculated.
-    global_ctx = trend_before(len(candles), min(12, count))
-    context_label = "UPWARD" if global_ctx > 0.15 else "DOWNWARD" if global_ctx < -0.15 else "SIDEWAYS/MIXED"
+    latest_dir = "GREEN" if candles[-1]["dir"] > 0 else "RED"
     if quality < 65:
-        warnings.append("Image is usable but a sharper screenshot/photo would improve candle-pattern geometry.")
+        warnings.append("Image is usable, but a sharper screenshot/photo will improve wick/body and SNR-level measurement.")
+    warnings.append("Setup Match measures coded rule agreement only; it is not a guaranteed win probability.")
 
-    pattern_signals = signals[:10]
     result = {
-        "bias": bias, "confidence": confidence, "image_quality_score": quality, "detected_candles": count,
-        "visual_trend": context_label, "momentum": "PATTERN ONLY", "volatility": "NOT USED",
-        "selected_pattern": selected, "pattern_direction": selected_dir, "pattern_score": round(best_score,1),
-        "pattern_signals": pattern_signals, "pattern_library": library, "pattern_library_size": 29,
-        "confluence_count": int(confluence), "setup_quality": setup_quality,
-        "reasons": reasons[:8], "warnings": warnings[:6],
+        "bias": bias,
+        "confidence": round(float(confidence), 1),
+        "setup_match": round(float(match_score), 1),
+        "image_quality_score": quality,
+        "detected_candles": count,
+        "visual_trend": context_label,
+        "momentum": "PATTERN TYPE 1-25 ONLY",
+        "volatility": "NOT USED",
+        "selected_pattern": selected,
+        "pattern_type": int(best.get("pattern_type") or 0) if best else 0,
+        "pattern_direction": selected_dir,
+        "pattern_score": round(float(match_score), 1),
+        "setup_rules": list(best.get("rules") or []) if best else list((best_near or {}).get("rules") or []),
+        "pattern_signals": signals_out,
+        "pattern_library": library,
+        "pattern_library_size": 25,
+        "confluence_count": 1 if best else 0,
+        "setup_quality": setup_quality,
+        "next_candle_color": next_color,
+        "entry_instruction": "NEXT CANDLE OPEN" if best else "WAIT FOR EXACT SETUP",
+        "recovery_trade": bool(best and best.get("recovery_trade")),
+        "recovery_candidate": bool(any(int(x.get("pattern_type") or 0) == 6 for x in near)),
+        "latest_candle_direction": latest_dir,
+        "last_outcome_used": previous_outcome or "NONE",
+        "reasons": reasons[:10],
+        "warnings": warnings[:7],
         "pattern_status": {
-            "Mode": "Pure candlestick + price-action pattern recognition",
-            "Indicators": "OFF — RSI/EMA/MACD/Stochastic/Bollinger are not used",
+            "Mode": "Pattern Type 1-25 only",
+            "Indicators": "OFF - RSI/EMA/MACD/Stochastic/Bollinger are not used",
             "Context": f"Visual candle context: {context_label}",
             "Candle geometry": f"{count} candle-like structures with body/wick estimates",
+            "Timeframe rules": "Type 11=30s; Type 12/13=2m; Type 1=OTC; Type 24=Live market",
         },
-        "engine": "RAJA Pattern-Only Engine V9.3 · Tap Candle Focus + Candle Count Fix + Scan Gate", "analysis_crop_mode": crop_name,
+        "engine": "RAJA V10 · SK 25 Setup Engine + V9.4 AI Lens + Legacy Safe + Scan Gate",
+        "analysis_crop_mode": crop_name,
     }
-    result.update(legacy_aliases(selected, selected_dir, round(best_score,1), pattern_signals, library, 29))
+    result.update(legacy_aliases(selected, selected_dir, round(float(match_score), 1), signals_out, 25))
     return result
 
 
@@ -1327,10 +1523,10 @@ def _analysis_candidate_score(result: dict[str, Any]) -> float:
     return candles * 12.0 + quality * 0.6 + strategy * 0.25 + readable
 
 
-def analyze_chart_image_mobile_safe(raw: bytes) -> dict[str, Any]:
+def analyze_chart_image_mobile_safe(raw: bytes, timeframe: str = "1m", market: str = "", last_outcome: str = "") -> dict[str, Any]:
     """Analyze the frame, rescue sideways mobile photos, then apply a strict signal-quality gate."""
     candidates: list[tuple[int, dict[str, Any]]] = []
-    base = analyze_chart_image(raw)
+    base = analyze_chart_image(raw, timeframe=timeframe, market=market, last_outcome=last_outcome)
     candidates.append((0, base))
 
     base_candles = int(base.get("detected_candles") or 0)
@@ -1339,13 +1535,13 @@ def analyze_chart_image_mobile_safe(raw: bytes) -> dict[str, Any]:
     if base_candles < max(MIN_SIGNAL_CANDLES + 4, 18) or base_trend == "UNREADABLE":
         for angle in (90, 270):
             try:
-                candidates.append((angle, analyze_chart_image(_rotate_image_bytes(raw, angle))))
+                candidates.append((angle, analyze_chart_image(_rotate_image_bytes(raw, angle), timeframe=timeframe, market=market, last_outcome=last_outcome)))
             except Exception:
                 pass
         # 180° is less common, so try it only for a very poor original read.
         if base_candles < 8:
             try:
-                candidates.append((180, analyze_chart_image(_rotate_image_bytes(raw, 180))))
+                candidates.append((180, analyze_chart_image(_rotate_image_bytes(raw, 180), timeframe=timeframe, market=market, last_outcome=last_outcome)))
             except Exception:
                 pass
 
@@ -1380,6 +1576,10 @@ def analyze_chart_image_mobile_safe(raw: bytes) -> dict[str, Any]:
         best["pattern_direction"] = "NONE"
         best["strategy_score"] = 0.0
         best["pattern_score"] = 0.0
+        best["setup_match"] = 0.0
+        best["next_candle_color"] = "NONE"
+        best["entry_instruction"] = "RESCAN FIRST"
+        best["recovery_trade"] = False
         best["confluence_count"] = 0
         best["setup_quality"] = "LOW"
         warnings = list(best.get("warnings") or [])
@@ -1405,20 +1605,23 @@ def analyze():
     raw = upload.read(MAX_UPLOAD_BYTES + 1)
     if len(raw) > MAX_UPLOAD_BYTES:
         return jsonify({"status": "error", "message": "Image is too large."}), 413
-    try:
-        result = analyze_chart_image_mobile_safe(raw)
-    except ValueError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
     broker = str(request.form.get("broker") or "").strip()[:60]
     market = str(request.form.get("market") or "").strip()[:40]
     pair = str(request.form.get("pair") or "").strip()[:100]
-    timeframe = str(request.form.get("timeframe") or "1m")[:20]
+    timeframe = str(request.form.get("timeframe") or "1m")[:20].lower()
+    last_outcome = str(request.form.get("last_outcome") or "").strip().upper()[:16]
     broker_key = "PocketOption" if broker == "Pocket Option" else "Quotex" if broker == "Quotex" else ""
     allowed_markets = BROKER_DATA.get(broker_key, {}) if broker_key else {}
     if not broker_key or market not in allowed_markets:
         return jsonify({"status": "error", "message": "Unsupported broker/market selection."}), 400
     if pair not in allowed_markets.get(market, []):
         return jsonify({"status": "error", "message": "Pair is not in the RAJA AI broker pair list."}), 400
+    if timeframe not in {"30s", "1m", "2m", "5m", "10m", "15m", "30m"}:
+        return jsonify({"status": "error", "message": "Unsupported timeframe."}), 400
+    try:
+        result = analyze_chart_image_mobile_safe(raw, timeframe=timeframe, market=market, last_outcome=last_outcome)
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
     result.update({"broker": broker, "market": market, "pair": pair, "timeframe": timeframe, "created_at": _now()})
     user = _norm_user(rec.get("user_id"))
     add_scan(user, broker, pair, timeframe, result)
