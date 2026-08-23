@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0b0619">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>RAJA AI Chart Scanner V7</title>
+  <title>RAJA AI Chart Scanner V9.2</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/static/raja-ai-icon-192.png">
   <link rel="apple-touch-icon" href="/static/raja-ai-icon-192.png">
@@ -41,6 +41,7 @@
     .focusPanel{margin-top:9px;padding:10px;border:1px solid var(--line);border-radius:13px;background:#0b0814}.focusTop{display:flex;justify-content:space-between;gap:8px;align-items:center}.focusTop b{font-size:10px}.focusMeter{height:7px;background:#05040a;border-radius:999px;overflow:hidden;margin-top:8px}.focusMeter span{display:block;height:100%;width:0;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e);transition:width .18s}.zoomRow{display:flex;align-items:center;gap:8px;margin-top:9px}.zoomRow input{flex:1}.zoomRow small{min-width:36px;text-align:right;color:#c4b5fd}.recentPairs{display:flex;gap:6px;overflow:auto;padding:7px 0 1px;scrollbar-width:none}.recentPairs::-webkit-scrollbar{display:none}.recentPair{white-space:nowrap;border:1px solid var(--line);background:#151027;color:#ddd6fe;border-radius:999px;padding:7px 9px;font-size:9px;font-weight:900;cursor:pointer}.pairDetect{min-height:18px;margin-top:4px;font-size:9px;color:#a1a1aa;line-height:1.35}.pairDetect.good{color:#86efac}.pairDetect.warn{color:#fcd34d}.pairDetect.bad{color:#fda4af}.currentScanBanner{margin-top:8px;padding:9px 10px;border-radius:11px;border:1px solid rgba(56,189,248,.25);background:rgba(56,189,248,.07);color:#ccefff;font-size:10px;font-weight:900;line-height:1.35}.installCta{width:100%;margin-top:10px}.copyBtn{padding:6px 8px!important;font-size:9px!important}.keyLine{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}.keyText{word-break:break-all;font-weight:900;color:#ddd6fe}.signalMeta{font-size:14px!important;color:#fff!important;background:rgba(124,58,237,.16);border:1px solid rgba(168,85,247,.28);border-radius:10px;padding:8px 10px;margin:9px auto 0!important;max-width:100%}.signalSubMeta{font-size:10px!important;color:#c4b5fd!important;margin-top:6px!important}.signalPairHero{margin:0 0 10px;padding:10px 12px;border-radius:12px;border:1px solid rgba(56,189,248,.30);background:rgba(56,189,248,.08);color:#e0f2fe;font-size:14px;font-weight:1000;text-align:center;letter-spacing:.25px}.scanGateBadge{margin:8px 0 0;padding:8px 10px;border-radius:10px;font-size:10px;font-weight:1000;text-align:center;border:1px solid rgba(34,197,94,.28);background:rgba(34,197,94,.08);color:#86efac}.scanGateBadge.bad{border-color:rgba(245,158,11,.35);background:rgba(245,158,11,.09);color:#fcd34d}.retakeBtn{width:100%;margin-top:9px}.captureLockedNote{font-size:9px;color:#fcd34d;margin-top:7px;text-align:center;font-weight:900}
     .flashOverlay{position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:0}.flashOverlay.up{animation:flashGreen .7s ease-in-out 2}.flashOverlay.down{animation:flashRed .7s ease-in-out 2}.flashOverlay.no{animation:flashAmber .55s ease-in-out 1}@keyframes flashGreen{0%,100%{opacity:0;box-shadow:inset 0 0 0 rgba(34,197,94,0)}50%{opacity:1;box-shadow:inset 0 0 90px rgba(34,197,94,.32)}}@keyframes flashRed{0%,100%{opacity:0;box-shadow:inset 0 0 0 rgba(239,68,68,0)}50%{opacity:1;box-shadow:inset 0 0 90px rgba(239,68,68,.30)}}@keyframes flashAmber{0%,100%{opacity:0}50%{opacity:1;box-shadow:inset 0 0 80px rgba(245,158,11,.24)}}
     .signalPulseUp{animation:resultPulseUp .65s ease-in-out 2}.signalPulseDown{animation:resultPulseDown .65s ease-in-out 2}@keyframes resultPulseUp{50%{border-color:#22c55e;box-shadow:0 0 40px rgba(34,197,94,.28)}}@keyframes resultPulseDown{50%{border-color:#ef4444;box-shadow:0 0 40px rgba(239,68,68,.28)}}
+    .quickLogin{border-color:rgba(56,189,248,.24);background:linear-gradient(180deg,rgba(10,25,42,.94),rgba(17,12,32,.96))}.quickLogin h3{margin-bottom:5px}.quickLogin .loginHelp{font-size:9px;color:#94a3b8;line-height:1.4;margin:0 0 7px}.quickLoginActions{display:grid;grid-template-columns:.8fr 1.2fr;gap:8px;margin-top:8px}.quickLogin.active{border-color:rgba(34,197,94,.30);background:linear-gradient(180deg,rgba(7,31,25,.92),rgba(17,12,32,.96))}.installStatus{margin-top:7px;font-size:9px;line-height:1.35;color:#a1a1aa;text-align:center}.installStatus.good{color:#86efac}.installStatus.warn{color:#fcd34d}.installGuideActions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}.entryResultPlacement{margin:10px 0}.entryHomePlacement{margin-top:10px}
     .adminExit{width:100%;margin-bottom:9px}
     @media(min-width:700px){body{padding-bottom:30px}.app{padding-top:24px}.nav{position:sticky;bottom:0;border:1px solid var(--line);border-radius:18px;max-width:480px;margin:10px auto 20px}}
   </style>
@@ -63,7 +64,17 @@
         <p>Use camera or screenshot for Quotex / Pocket Option. V9 keeps the full V8 Focus Guard + mobile Scan Gate, but removes indicator logic. Signals come only from visible candlestick and price-action/chart patterns. Weak, rotated or conflicting scans stay NO TRADE / RESCAN.</p>
         <div class="statusRow"><span class="chip" id="accessChip">🔒 Access locked</span><span class="chip">🎯 Focus Guard</span><span class="chip">🧠 Smart Pair</span></div>
         <button class="btn green installCta" id="installAppBtn" type="button">📲 INSTALL APP</button>
+        <div class="installStatus" id="installStatus">Checking app install availability…</div>
       <div class="notice" style="margin-top:9px">Pattern-only scan: RSI, EMA, MACD, Stochastic and Bollinger logic are OFF. Conflicting or weak patterns stay NO TRADE.</div>
+      </div>
+
+      <div class="card quickLogin" id="quickLoginCard">
+        <h3 class="sectionTitle">🔑 License Login</h3>
+        <p class="loginHelp">License key yahin enter karein. User / UID optional hai; assigned key ka user automatically load ho jayega.</p>
+        <label>License Key</label><input id="quickLoginKey" class="input" autocomplete="off" placeholder="RAJA-SCAN-...">
+        <label>User / UID <span style="text-transform:none;color:#8b8b9d">(optional)</span></label><input id="quickLoginUser" class="input" placeholder="Optional">
+        <div class="quickLoginActions"><button class="btn secondary" id="quickPasteBtn" type="button">📋 PASTE KEY</button><button class="btn" id="quickLoginBtn" type="button">VERIFY & UNLOCK</button></div>
+        <div id="quickLoginMsg" class="notice">Enter your existing license key to unlock scanning.</div>
       </div>
 
       <div class="card" id="scannerCard">
@@ -84,13 +95,14 @@
         <div class="pairDetect" id="pairDetectStatus">Smart Pair: upload a screenshot; supported browsers can read the broker header automatically.</div>
         <div class="currentScanBanner" id="currentScanBanner">CURRENT SCAN: --</div>
         <label>Timeframe / Expiry</label><select id="timeframe"><option>1m</option><option>2m</option><option>5m</option><option>10m</option><option>15m</option><option>30m</option></select>
+        <div class="preview" id="preview"><img id="previewImg" alt="Chart preview"><div class="fileMeta" id="fileMeta"></div></div>
+        <div id="entryHomeAnchor" class="entryHomePlacement"></div>
         <div class="entryWindow" id="entryWindow">
           <div class="entryStatus" id="entryStatus">CURRENT 1M CANDLE — READY</div>
           <div class="entryTimer" id="entryTimer">01:00</div>
           <div class="entryAlert" id="entryAlert">Upload chart, analyse, then wait for candle close.</div>
           <div class="entryNote" id="entryNote">Strict close-confirm is available with Camera → ARM CLOSE SCAN. Entry alert only; this app does not place a broker order automatically.</div>
         </div>
-        <div class="preview" id="preview"><img id="previewImg" alt="Chart preview"><div class="fileMeta" id="fileMeta"></div></div>
         <button class="btn scanBtn" id="analyzeBtn" disabled>✨ ANALYSE CHART</button>
         <div class="notice">Use a straight, sharp chart with 14+ visible candles. V9 scans candlestick body/wick geometry plus support/resistance, rejection, breakout/retest and double-top/bottom context. No indicator values are used.</div>
       </div>
@@ -99,6 +111,7 @@
         <h3 class="sectionTitle">✨ Analysis Result</h3>
         <div class="signalPairHero" id="signalPairHero">PAIR: --</div>
         <div class="bias no" id="biasBox"><div class="signalArrow" id="signalArrow">⏸</div><div class="big" id="biasText">NO TRADE</div><div class="signalMeta" id="signalMeta">PAIR --</div><div class="signalSubMeta" id="signalSubMeta">-- · --</div><div class="confidence">Confidence <b id="confidenceText">--</b></div><div class="meter"><span id="confidenceBar"></span></div></div>
+        <div id="entryResultAnchor" class="entryResultPlacement"></div>
         <div class="scanGateBadge" id="scanGateBadge">SCAN QUALITY: --</div>
         <button class="btn secondary retakeBtn hide" id="retakeBtn" type="button">📷 RETAKE / NEW PHOTO</button>
         <div class="kv">
@@ -150,6 +163,7 @@
 <nav class="nav" id="bottomNav"><div class="navInner"><button class="navBtn active" data-tab="scan"><span>📷</span>Scan</button><button class="navBtn" data-tab="history"><span>🕘</span>History</button><button class="navBtn" data-tab="plans"><span>💎</span>Plans</button></div></nav>
 
 <div class="flashOverlay" id="flashOverlay"></div>
+<div class="modal" id="installGuideModal"><div class="sheet"><div class="sheetHead"><h3>📲 Install RAJA Scanner</h3><button class="close" onclick="closeModal('installGuideModal')">✕</button></div><div class="notice" id="installGuideText" style="font-size:11px;color:#d1d5db">Preparing install…</div><div class="installGuideActions"><button class="btn secondary" id="openChromeBtn" type="button">🌐 OPEN IN CHROME</button><button class="btn" id="retryInstallBtn" type="button">📲 TRY INSTALL</button></div></div></div>
 <div class="modal" id="cameraModal"><div class="sheet"><div class="sheetHead"><h3>📷 V5 Focus Camera</h3><button class="close" onclick="closeLiveCamera()">✕</button></div><div class="cameraStage" id="cameraStage"><video id="cameraVideo" autoplay playsinline muted></video><div class="cameraGuide"></div><div class="cameraFocusBox" id="cameraFocusBox"></div><div class="cameraTimer" id="cameraTimer">READY</div><div class="focusBadge" id="focusBadge">FOCUS STARTING…</div></div><div class="cameraHint">Keep the candle chart inside the guide. Tap the preview to request focus where supported. Focus Guard checks sharpness + movement and blocks accidental blurred capture. ARM CLOSE SCAN only captures a focused frame at candle close.</div><div class="focusPanel"><div class="focusTop"><b id="focusDetail">Sharpness -- · Motion --</b><button class="btn secondary" id="focusGuardBtn" style="padding:7px 9px" onclick="toggleFocusGuard()">FOCUS GUARD ON</button></div><div class="focusMeter"><span id="focusMeterBar"></span></div><div class="zoomRow hide" id="zoomRow"><span style="font-size:9px;color:#a1a1aa">ZOOM</span><input type="range" id="cameraZoom" min="1" max="1" step="0.1" value="1"><small id="zoomValue">1.0×</small></div></div><div class="cameraActions"><button class="btn secondary" id="captureNowBtn" onclick="captureCameraNow()" disabled>🔒 CAPTURE LOCKED</button><button class="btn green" id="armCloseBtn" onclick="armCameraCloseScan()" disabled>🔒 ARM LOCKED</button></div><div class="captureLockedNote" id="captureLockedNote">Hold steady. Capture unlocks only after FOCUS LOCKED ✅.</div><div class="notice" id="cameraMsg"></div></div></div>
 <div class="modal" id="adminGateModal"><div class="sheet"><div class="sheetHead"><h3>🛡 Hidden Admin</h3><button class="close" onclick="exitAdmin()">✕</button></div><label>Admin Code</label><input type="password" inputmode="numeric" class="input" id="adminGateCode" placeholder="Enter admin code"><button class="btn" style="width:100%;margin-top:10px" onclick="unlockAdmin()">UNLOCK ADMIN</button><div id="adminGateMsg" class="notice"></div></div></div>
 <div class="modal" id="loginModal"><div class="sheet"><div class="sheetHead"><h3>🔑 Unlock Scanner</h3><button class="close" onclick="closeModal('loginModal')">✕</button></div><label>User / UID <span style="text-transform:none;color:#8b8b9d">(optional)</span></label><input id="loginUser" class="input" placeholder="Leave blank if key is already assigned"><label>License Key</label><input id="loginKey" class="input" autocomplete="off" placeholder="RAJA-SCAN-..."><div class="grid2" style="margin-top:8px"><button class="btn secondary" type="button" onclick="pasteLicenseKey()">📋 PASTE KEY</button><button class="btn" type="button" onclick="loginLicense()">VERIFY & UNLOCK</button></div><div id="loginMsg" class="notice">You can unlock with the license key alone. The assigned User / UID will be loaded automatically.</div></div></div>
@@ -177,31 +191,49 @@ function setTab(tab){document.querySelectorAll('.tabPage').forEach(x=>x.classLis
 document.querySelectorAll('.navBtn').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 
 function isStandalone(){return window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true}
-function updateInstallButtons(){const installed=isStandalone();['installBtn','installAppBtn'].forEach(id=>{const b=$(id);if(b)b.style.display=installed?'none':''})}
-async function installApp(){
-  if(isStandalone()){updateInstallButtons();return}
-  if(deferredInstallPrompt){
-    deferredInstallPrompt.prompt();
-    const choice=await deferredInstallPrompt.userChoice;
-    if(choice&&choice.outcome==='accepted')updateInstallButtons();
-    deferredInstallPrompt=null;
-    return;
-  }
-  const isiOS=/iPad|iPhone|iPod/.test(navigator.userAgent);
-  alert(isiOS?'iPhone/iPad: tap Share → Add to Home Screen.':'Install prompt is controlled by the browser. Open the browser menu and choose Install app / Add to Home Screen.');
+function isAndroid(){return /Android/i.test(navigator.userAgent)}
+function isIOS(){return /iPad|iPhone|iPod/.test(navigator.userAgent)}
+function isChromeAndroid(){return isAndroid()&&/Chrome\//i.test(navigator.userAgent)&&!/EdgA|OPR\//i.test(navigator.userAgent)}
+function setInstallStatus(text,kind=''){const el=$('installStatus');if(!el)return;el.textContent=text;el.className='installStatus'+(kind?' '+kind:'')}
+function updateInstallButtons(){
+  const installed=isStandalone();
+  ['installBtn','installAppBtn'].forEach(id=>{const b=$(id);if(!b)return;b.style.display=installed?'none':'';if(!installed)b.textContent=id==='installBtn'?'⬇':'📲 INSTALL APP'});
+  if(installed)setInstallStatus('✅ App installed / running in app mode.','good');
+  else if(deferredInstallPrompt)setInstallStatus('✅ One-tap install is ready. Tap INSTALL APP.','good');
+  else setInstallStatus('Install eligibility is being checked by the browser…','');
 }
-window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstallPrompt=e;updateInstallButtons()});
-window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;updateInstallButtons()});
-$('installBtn').onclick=installApp;$('installAppBtn').onclick=installApp;updateInstallButtons();
+function chromeIntentUrl(){const host=location.host,path=location.pathname+location.search+location.hash;return `intent://${host}${path}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(location.href)};end`}
+function showInstallGuide(){
+  const txt=$('installGuideText'),chrome=$('openChromeBtn');
+  if(isIOS()){txt.innerHTML='<b>iPhone/iPad:</b> Safari me Share button tap karein → <b>Add to Home Screen</b>.';chrome.classList.add('hide')}
+  else if(isAndroid()&&!isChromeAndroid()){txt.innerHTML='Aapka current browser direct PWA prompt expose nahi kar raha. <b>Open in Chrome</b> karein, phir INSTALL APP tap karein.';chrome.classList.remove('hide')}
+  else{txt.innerHTML='Browser ne abhi native install prompt expose nahi kiya. Chrome menu (⋮) me <b>Install app</b> / <b>Add to Home screen</b> use karein. Agar prompt eligible hua to TRY INSTALL turant native dialog kholega.';chrome.classList.toggle('hide',!isAndroid())}
+  openModal('installGuideModal');
+}
+async function installApp(){
+  if(isStandalone()){updateInstallButtons();showToast('✅ App is already installed');return}
+  if('serviceWorker' in navigator){try{await navigator.serviceWorker.ready}catch(_){}}
+  if(deferredInstallPrompt){
+    const prompt=deferredInstallPrompt;deferredInstallPrompt=null;
+    prompt.prompt();
+    try{const choice=await prompt.userChoice;if(choice&&choice.outcome==='accepted'){setInstallStatus('✅ Installation accepted.','good');return}setInstallStatus('Install cancelled. You can try again from the browser menu.','warn')}catch(_){setInstallStatus('Install prompt closed.','warn')}
+    updateInstallButtons();return;
+  }
+  setInstallStatus('Native install prompt is not available in this browser yet.','warn');showInstallGuide();
+}
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstallPrompt=e;setInstallStatus('✅ One-tap install is ready. Tap INSTALL APP.','good');updateInstallButtons()});
+window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;setInstallStatus('✅ RAJA Scanner installed.','good');updateInstallButtons()});
+$('installBtn').onclick=installApp;$('installAppBtn').onclick=installApp;$('retryInstallBtn').onclick=installApp;$('openChromeBtn').onclick=()=>{location.href=chromeIntentUrl()};updateInstallButtons();
+setTimeout(()=>{if(!isStandalone()&&!deferredInstallPrompt)setInstallStatus(isAndroid()&&!isChromeAndroid()?'Open this page in Chrome for one-tap install.':'If INSTALL APP does not open a native prompt, use browser menu → Install app.','warn')},2500);
 
 async function loadConfig(){try{config=await fetch('/api/config',{cache:'no-store'}).then(r=>r.json());$('quotexLink').href=config.quotex_url;$('pocketLink').href=config.pocket_url;$('monthlyPrice').textContent=Number(config.monthly_price_eur||19.99).toFixed(2)}catch(e){console.warn(e)}}
 async function refreshSession(){const a=auth();if(!a.key||!a.user||!a.token){setAccess(false);return false}try{const r=await fetch('/api/verify-license',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:a.key,user:a.user,device:deviceId,device_label:deviceLabel(),session_token:a.token,heartbeat:true})});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Session inactive');setAccess(true,j);return true}catch(e){localStorage.removeItem('raja_scan_token');setAccess(false,e.message);return false}}
-function setAccess(ok,data){const chip=$('accessChip'),box=$('accessState');if(ok){chip.className='chip good';chip.textContent='✅ '+(data.plan||'PRO');box.innerHTML=`<b>ACTIVE</b> · ${escapeHtml(data.plan||'PRO')}<br>User: ${escapeHtml(data.user||auth().user)}<br>Expiry: ${escapeHtml(fmtDate(data.expires_at))}`;$('analyzeBtn').disabled=!selectedFile}else{chip.className='chip';chip.textContent='🔒 Access locked';box.textContent=typeof data==='string'?data:'No active scanner license on this device.';/* Keep Analyze clickable after a chart is selected so analyze() can open the login/trial flow instead of leaving the user stuck on a disabled button. */$('analyzeBtn').disabled=!selectedFile}}
+function setAccess(ok,data){const chip=$('accessChip'),box=$('accessState'),quick=$('quickLoginCard'),qmsg=$('quickLoginMsg');if(ok){chip.className='chip good';chip.textContent='✅ '+(data.plan||'PRO');box.innerHTML=`<b>ACTIVE</b> · ${escapeHtml(data.plan||'PRO')}<br>User: ${escapeHtml(data.user||auth().user)}<br>Expiry: ${escapeHtml(fmtDate(data.expires_at))}`;if(quick){quick.classList.add('active');quick.style.display='none'}if(qmsg)qmsg.textContent='✅ Scanner unlocked.';$('analyzeBtn').disabled=!selectedFile}else{chip.className='chip';chip.textContent='🔒 Access locked';box.textContent=typeof data==='string'?data:'No active scanner license on this device.';if(quick){quick.style.display='block';quick.classList.remove('active')}if(qmsg&&typeof data==='string')qmsg.textContent='❌ '+data;$('analyzeBtn').disabled=!selectedFile}}
 
 $('cameraBtn').onclick=()=>$('cameraInput').click();$('uploadBtn').onclick=()=>$('uploadInput').click();$('cameraInput').onchange=e=>chooseFile(e.target.files[0]);$('uploadInput').onchange=e=>chooseFile(e.target.files[0]);
 function chooseFile(file){if(!file)return;selectedFile=file;const url=URL.createObjectURL(file);$('previewImg').src=url;$('preview').style.display='block';$('fileMeta').textContent=`${file.name||'camera-photo'} · ${(file.size/1024/1024).toFixed(2)} MB`;/* Enable after a file is selected. If access is locked, analyze()/analyzeV2() will open the existing login dialog. */$('analyzeBtn').disabled=false}
 $('analyzeBtn').onclick=analyze;
-async function analyze(){if(!selectedFile)return;const ok=await refreshSession();if(!ok){openLogin();return}const b=$('analyzeBtn');b.disabled=true;b.innerHTML='<span class="spinner"></span>ANALYSING...';const fd=new FormData();fd.append('image',selectedFile);fd.append('broker',$('broker').value);fd.append('pair',$('pair').value.trim()||'Unknown Pair');fd.append('timeframe',$('timeframe').value);try{const r=await fetch('/api/analyze',{method:'POST',headers:authHeaders(),body:fd});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Analysis failed');renderResult(j.result)}catch(e){alert(e.message)}finally{b.disabled=false;b.textContent='✨ ANALYSE CHART'}}
+async function analyze(){if(!selectedFile)return;const ok=await refreshSession();if(!ok){showMainLogin('🔑 Enter your license key above, then tap VERIFY & UNLOCK.');return}const b=$('analyzeBtn');b.disabled=true;b.innerHTML='<span class="spinner"></span>ANALYSING...';const fd=new FormData();fd.append('image',selectedFile);fd.append('broker',$('broker').value);fd.append('pair',$('pair').value.trim()||'Unknown Pair');fd.append('timeframe',$('timeframe').value);try{const r=await fetch('/api/analyze',{method:'POST',headers:authHeaders(),body:fd});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Analysis failed');renderResult(j.result)}catch(e){alert(e.message)}finally{b.disabled=false;b.textContent='✨ ANALYSE CHART'}}
 function renderResult(x){
   $('resultCard').style.display='block';
   const box=$('biasBox'),rawBias=String(x.bias||'NO TRADE'),rescan=Boolean(x.rescan_required);
@@ -219,7 +251,7 @@ function renderResult(x){
   gate.className='scanGateBadge'+(rescan?' bad':'');
   gate.textContent=rescan?`SCAN QUALITY: RESCAN · ${String(x.scan_gate_reason||'Need a clearer chart')}`:`SCAN QUALITY: PASS${x.auto_rotation_degrees?` · AUTO-ROTATED ${x.auto_rotation_degrees}°`:''}`;
   $('retakeBtn').classList.toggle('hide',!rescan);
-  $('retakeBtn').onclick=()=>{setTab('scan');openLiveCamera()};
+  $('retakeBtn').onclick=()=>{moveEntryWindow('home');setTab('scan');openLiveCamera()};
   document.title=`${rescan?'📷':isUp?'↑':isDown?'↓':'⏸'} ${pair} · RAJA AI Scanner`;
   $('confidenceText').textContent=`${Number(x.confidence||0).toFixed(1)}%`;
   $('confidenceBar').style.width=`${Math.max(0,Math.min(100,Number(x.confidence||0)))}%`;
@@ -245,6 +277,10 @@ function renderResult(x){
   $('resultCard').scrollIntoView({behavior:'smooth',block:'start'});
 }
 
+async function quickPasteLicense(){const input=$('quickLoginKey');try{if(navigator.clipboard&&navigator.clipboard.readText){const text=(await navigator.clipboard.readText()).trim();if(text){input.value=text;showToast('✅ License key pasted');return}}}catch(_){}input.focus();showToast('Paste your license key here')}
+async function quickLoginLicense(){const user=$('quickLoginUser').value.trim(),key=$('quickLoginKey').value.trim(),msg=$('quickLoginMsg'),btn=$('quickLoginBtn');if(!key){msg.textContent='❌ Enter or paste the license key.';return}btn.disabled=true;btn.innerHTML='<span class="spinner"></span>VERIFYING...';msg.textContent='Checking license…';try{const r=await fetch('/api/verify-license',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,user,device:deviceId,device_label:deviceLabel()})});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Login failed');const resolvedUser=String(j.user||user||'').toLowerCase();localStorage.setItem('raja_scan_key',key);localStorage.setItem('raja_scan_user',resolvedUser);localStorage.setItem('raja_scan_token',j.session_token);$('loginUser').value=resolvedUser;$('loginKey').value=key;msg.textContent=j.replaced_previous_device?'✅ Login successful. Previous device signed out.':'✅ Scanner unlocked.';setAccess(true,{...j,user:resolvedUser});showToast('✅ Scanner unlocked')}catch(e){msg.textContent='❌ '+e.message}finally{btn.disabled=false;btn.textContent='VERIFY & UNLOCK'}}
+$('quickPasteBtn').onclick=quickPasteLicense;$('quickLoginBtn').onclick=quickLoginLicense;$('quickLoginKey').addEventListener('keydown',e=>{if(e.key==='Enter')quickLoginLicense()});
+function showMainLogin(message='License required to analyse charts.'){setTab('scan');const card=$('quickLoginCard');if(card){card.style.display='block';card.classList.remove('active');$('quickLoginMsg').textContent=message;card.scrollIntoView({behavior:'smooth',block:'center'});setTimeout(()=>$('quickLoginKey').focus(),350)}else openLogin()}
 function openLogin(){openModal('loginModal')}function openTrial(){openModal('trialModal')}
 async function loginLicense(){const user=$('loginUser').value.trim(),key=$('loginKey').value.trim(),msg=$('loginMsg');if(!key){msg.textContent='❌ Enter or paste the license key.';return}msg.textContent='Checking...';try{const r=await fetch('/api/verify-license',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key,user,device:deviceId,device_label:deviceLabel()})});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Login failed');const resolvedUser=String(j.user||user||'').toLowerCase();localStorage.setItem('raja_scan_key',key);localStorage.setItem('raja_scan_user',resolvedUser);localStorage.setItem('raja_scan_token',j.session_token);$('loginUser').value=resolvedUser;msg.textContent=j.replaced_previous_device?'✅ Login successful. Previous device signed out.':'✅ Scanner unlocked.';setAccess(true,{...j,user:resolvedUser});setTimeout(()=>closeModal('loginModal'),700)}catch(e){msg.textContent='❌ '+e.message}}
 async function startTrial(){const user=$('trialUser').value.trim(),msg=$('trialMsg');msg.textContent='Creating trial...';try{const r=await fetch('/api/free-trial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user,device:deviceId,device_label:deviceLabel()})});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Trial failed');localStorage.setItem('raja_scan_key',j.key);localStorage.setItem('raja_scan_user',j.user);localStorage.setItem('raja_scan_token',j.session_token);msg.innerHTML=`✅ Trial active until ${escapeHtml(fmtDate(j.expires_at))}<div class="keyLine"><span class="keyText">${escapeHtml(j.key)}</span><button class="btn secondary copyBtn" id="copyTrialKey" type="button">COPY KEY</button></div>`;$('copyTrialKey').onclick=()=>copyText(j.key,'License key copied');setAccess(true,j)}catch(e){msg.textContent='❌ '+e.message}}
@@ -267,7 +303,7 @@ async function generateLicense(){const user=$('genUser').value.trim(),plan=$('ge
 async function adminPost(url,extra){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(adminBody(extra))});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Admin request failed');return j}
 
 async function loadSharedChartFromUrl(){const u=new URL(location.href),token=u.searchParams.get('shared');if(!token)return;const status=$('pairDetectStatus');try{status.className='pairDetect';status.textContent='Loading chart shared to RAJA Scanner…';const r=await fetch('/api/shared-image/'+encodeURIComponent(token),{cache:'no-store'});if(!r.ok)throw new Error('Shared chart expired or unavailable');const blob=await r.blob();const ext=(blob.type||'image/jpeg').includes('png')?'png':(blob.type||'').includes('webp')?'webp':'jpg';const f=new File([blob],`shared-chart.${ext}`,{type:blob.type||'image/jpeg'});chooseFile(f,'shared-screenshot',0);u.searchParams.delete('shared');history.replaceState(null,'',u.pathname+(u.searchParams.toString()?'?'+u.searchParams.toString():'')+u.hash);status.className='pairDetect good';status.textContent='Shared chart loaded. Smart Pair will try to match the broker header.'}catch(e){status.className='pairDetect bad';status.textContent='Shared chart error: '+e.message}}
-(async()=>{await loadConfig();await refreshSession();updateCurrentScanBanner();if('serviceWorker' in navigator){try{const reg=await navigator.serviceWorker.register('/sw.js?v=8');await reg.update();navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!sessionStorage.getItem('raja_sw_v8_reloaded')){sessionStorage.setItem('raja_sw_v8_reloaded','1');location.reload()}})}catch(e){console.debug('Service worker update',e)}}await loadSharedChartFromUrl()})();
+(async()=>{await loadConfig();await refreshSession();updateCurrentScanBanner();if('serviceWorker' in navigator){try{const reg=await navigator.serviceWorker.register('/sw.js?v=9.2');await reg.update();navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!sessionStorage.getItem('raja_sw_v92_reloaded')){sessionStorage.setItem('raja_sw_v92_reloaded','1');location.reload()}})}catch(e){console.debug('Service worker update',e)}}await loadSharedChartFromUrl()})();
 
 
 // ============================================================
@@ -350,12 +386,18 @@ $('soundBtn').onclick=()=>{soundEnabled=!soundEnabled;localStorage.setItem('raja
 function flash(kind){const f=$('flashOverlay');if(!f)return;f.className='flashOverlay';void f.offsetWidth;f.classList.add(kind);setTimeout(()=>{f.className='flashOverlay'},1500)}
 function pulseResult(kind){const card=$('resultCard');card.classList.remove('signalPulseUp','signalPulseDown');void card.offsetWidth;if(kind==='up')card.classList.add('signalPulseUp');if(kind==='down')card.classList.add('signalPulseDown');setTimeout(()=>card.classList.remove('signalPulseUp','signalPulseDown'),1600)}
 
+function moveEntryWindow(where='home'){
+  const win=$('entryWindow');if(!win)return;
+  const anchor=where==='result'?$('entryResultAnchor'):$('entryHomeAnchor');if(!anchor)return;
+  anchor.insertAdjacentElement('afterend',win);
+}
 function resetEntryState(){activeSignal=null;activeEntryEpochMs=0;activeEntryDone=false;entryCountdownDone.clear();$('entryWindow').classList.remove('ready','downReady');}
 function startSignalEntry(x, opts={}){
   resetEntryState();
   const bias=String(x.bias||'NO TRADE').toUpperCase();
-  if(bias==='NO TRADE' || (!bias.startsWith('UP')&&!bias.startsWith('DOWN'))){$('entryStatus').textContent='NO TRADE — WAIT FOR A CLEAN SETUP';$('entryAlert').textContent='No next-candle entry alert armed.';$('entryNote').textContent='Weak/conflicting setups stay blocked.';noTradeTone();flash('no');return;}
+  if(bias==='NO TRADE' || (!bias.startsWith('UP')&&!bias.startsWith('DOWN'))){moveEntryWindow('home');$('entryStatus').textContent='NO TRADE — WAIT FOR A CLEAN SETUP';$('entryAlert').textContent='No next-candle entry alert armed.';$('entryNote').textContent='Weak/conflicting setups stay blocked.';noTradeTone();flash('no');return;}
   activeSignal={...x,bias};
+  moveEntryWindow('result');
   activeEntryEpochMs=Number(opts.entryEpochMs||0) || (opts.capturedAtClose?Date.now():nextBoundaryMs());
   activeEntryDone=false;entryCountdownDone.clear();
   $('entryWindow').classList.toggle('ready',bias.startsWith('UP'));$('entryWindow').classList.toggle('downReady',bias.startsWith('DOWN'));
@@ -390,7 +432,7 @@ setInterval(tickEntryTimer,250); $('timeframe').addEventListener('change',()=>{r
 
 // Override file selection so source/timing context is preserved.
 const originalChooseFile = chooseFile;
-chooseFile = function(file, source='screenshot', boundaryMs=0){selectedFileSource=source;selectedCaptureBoundaryMs=Number(boundaryMs||0);originalChooseFile(file);resetEntryState();tickEntryTimer();smartDetectPair(file).catch(()=>{})};
+chooseFile = function(file, source='screenshot', boundaryMs=0){selectedFileSource=source;selectedCaptureBoundaryMs=Number(boundaryMs||0);originalChooseFile(file);resetEntryState();moveEntryWindow('home');tickEntryTimer();smartDetectPair(file).catch(()=>{})};
 $('uploadInput').onchange=e=>chooseFile(e.target.files[0],'screenshot',0);
 $('cameraInput').onchange=e=>chooseFile(e.target.files[0],'camera-photo',0);
 
@@ -422,7 +464,7 @@ function armCameraCloseScan(){if(!cameraStream){$('cameraMsg').textContent='Star
 $('cameraBtn').onclick=openLiveCamera;
 
 async function analyzeV2(opts={}){
-  if(!selectedFile)return;saveSelection();addRecentPair();const ok=await refreshSession();if(!ok){openLogin();return}
+  if(!selectedFile)return;saveSelection();addRecentPair();const ok=await refreshSession();if(!ok){showMainLogin('🔑 Enter your license key above, then tap VERIFY & UNLOCK.');return}
   const b=$('analyzeBtn');b.disabled=true;b.innerHTML='<span class="spinner"></span>ANALYSING...';
   const fd=new FormData();fd.append('image',selectedFile);fd.append('broker',$('broker').value);fd.append('market',$('market').value);fd.append('pair',$('pair').value);fd.append('timeframe',$('timeframe').value);
   try{const r=await fetch('/api/analyze',{method:'POST',headers:authHeaders(),body:fd});const j=await r.json();if(!r.ok||j.status!=='success')throw new Error(j.message||'Analysis failed');renderResult(j.result);startSignalEntry(j.result,{capturedAtClose:Boolean(opts.capturedAtClose),entryEpochMs:Number(opts.entryEpochMs||0)})}catch(e){alert(e.message)}finally{b.disabled=false;b.textContent='✨ ANALYSE CHART'}
@@ -448,7 +490,7 @@ function exitAdmin(){sessionStorage.removeItem('raja_scanner_admin_ok');$('admin
 window.addEventListener('hashchange',()=>{if(!showAdminRoute()){$('bottomNav').style.display='';if(!$('tab-admin').classList.contains('hide'))setTab('scan')}});
 
 // First V2 initialization.
-refreshMarkets();restoreSelection();renderRecentPairs();updateSoundBtn();updateFocusUI();tickEntryTimer();setTimeout(showAdminRoute,0);
+refreshMarkets();restoreSelection();renderRecentPairs();updateSoundBtn();updateFocusUI();moveEntryWindow('home');tickEntryTimer();setTimeout(showAdminRoute,0);
 </script>
 </body>
 </html>
