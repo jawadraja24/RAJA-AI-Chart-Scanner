@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, redirect, request, send_from_directory
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 try:
@@ -24,6 +24,8 @@ STATIC_DIR = APP_DIR / "static"
 DATA_DIR = Path(os.environ.get("RAJA_SCANNER_DATA_DIR", str(APP_DIR / "data"))).resolve()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 STORE_FILE = DATA_DIR / "scanner_store.json"
+SHARED_DIR = DATA_DIR / "shared_charts"
+SHARED_DIR.mkdir(parents=True, exist_ok=True)
 
 DATABASE_URL = (os.environ.get("DATABASE_URL") or os.environ.get("RAJA_DATABASE_URL") or "").strip()
 ADMIN_PASSWORD = (os.environ.get("RAJA_SCANNER_ADMIN_PASSWORD") or "3250").strip()
@@ -960,6 +962,57 @@ def home():
     return send_from_directory(APP_DIR, "index.html")
 
 
+def _cleanup_shared_charts(max_age_seconds: int = 900) -> None:
+    cutoff = time.time() - max_age_seconds
+    try:
+        for path in SHARED_DIR.iterdir():
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+@app.post("/share-target")
+def share_target():
+    """PWA share target: receive an image from Android/desktop share sheet.
+
+    The image is stored under an unguessable short-lived token and is deleted the
+    first time the scanner loads it. No broker password/session information is used.
+    """
+    _cleanup_shared_charts()
+    f = request.files.get("chart")
+    if not f or not f.filename:
+        return redirect("/?share_error=no-image", code=303)
+    raw = f.read(MAX_UPLOAD_BYTES + 1)
+    if not raw or len(raw) > MAX_UPLOAD_BYTES:
+        return redirect("/?share_error=image-too-large", code=303)
+    mime = str(f.mimetype or "").lower()
+    suffix = ".png" if "png" in mime else ".webp" if "webp" in mime else ".jpg"
+    try:
+        image = Image.open(io.BytesIO(raw))
+        image.verify()
+    except Exception:
+        return redirect("/?share_error=invalid-image", code=303)
+    token = secrets.token_urlsafe(18)
+    (SHARED_DIR / f"{token}{suffix}").write_bytes(raw)
+    return redirect(f"/?shared={token}", code=303)
+
+
+@app.get("/api/shared-image/<token>")
+def shared_image(token: str):
+    _cleanup_shared_charts()
+    if not token or len(token) > 80 or any(not (c.isalnum() or c in "-_") for c in token):
+        return jsonify({"status": "error", "message": "Invalid share token."}), 400
+    path = next((p for p in SHARED_DIR.glob(f"{token}.*") if p.is_file()), None)
+    if path is None:
+        return jsonify({"status": "error", "message": "Shared chart expired or not found."}), 404
+    raw = path.read_bytes()
+    suffix = path.suffix.lower()
+    path.unlink(missing_ok=True)
+    mime = "image/png" if suffix == ".png" else "image/webp" if suffix == ".webp" else "image/jpeg"
+    return Response(raw, mimetype=mime, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/manifest.json")
 def manifest():
     return send_from_directory(APP_DIR, "manifest.json")
@@ -975,7 +1028,7 @@ def health():
     return jsonify({
         "status": "ok",
         "app": "RAJA AI Chart Scanner",
-        "version": "2.0.0",
+        "version": "5.0.0",
         "storage": "postgres" if DATABASE_URL and psycopg is not None else "file",
         "monthly_price_eur": MONTHLY_PRICE_EUR,
     })
