@@ -501,12 +501,136 @@ def _group_columns(active: np.ndarray) -> list[tuple[int, int]]:
 
 
 
-def _detect_candles_in_chart(chart: np.ndarray) -> tuple[list[dict[str, Any]], float, list[str], float, float]:
-    """Detect candle-like red/green columns and estimate body/wick geometry.
+def _connected_color_components(mask: np.ndarray) -> list[tuple[int, int, int, int, int]]:
+    """Return 8-connected component boxes as (left,right,top,bottom,pixels).
 
-    V9 is pattern-only, so the detector keeps approximate candle body, upper wick,
-    lower wick, open and close positions. These are visual estimates from pixels,
-    not broker OHLC values.
+    The old V9 counter projected every coloured pixel onto the X axis. On Pocket
+    Option mobile screenshots, wide BUY/SELL/sentiment UI bands could make many
+    separate candles look like one huge X component. This run-length component
+    labeller keeps candles separate in 2D without adding OpenCV/scipy dependencies.
+    """
+    h, w = mask.shape
+    parent: list[int] = []
+    runs: list[tuple[int, int, int, int]] = []
+    prev: list[tuple[int, int, int]] = []
+
+    def make_label() -> int:
+        parent.append(len(parent))
+        return len(parent) - 1
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for y in range(h):
+        xs = np.flatnonzero(mask[y])
+        curr: list[tuple[int, int, int]] = []
+        if xs.size:
+            run_start = run_last = int(xs[0])
+            for xv in xs[1:]:
+                x = int(xv)
+                if x == run_last + 1:
+                    run_last = x
+                else:
+                    curr.append((run_start, run_last, make_label()))
+                    run_start = run_last = x
+            curr.append((run_start, run_last, make_label()))
+
+        # Runs are X-sorted. Connect current row to overlapping/adjacent previous runs.
+        pi = 0
+        for left, right, label in curr:
+            while pi < len(prev) and prev[pi][1] < left - 1:
+                pi += 1
+            pj = pi
+            while pj < len(prev) and prev[pj][0] <= right + 1:
+                p_left, p_right, p_label = prev[pj]
+                if left <= p_right + 1 and right >= p_left - 1:
+                    union(label, p_label)
+                pj += 1
+            runs.append((y, left, right, label))
+        prev = curr
+
+    boxes: dict[int, list[int]] = {}
+    for y, left, right, label in runs:
+        root = find(label)
+        box = boxes.setdefault(root, [w, -1, h, -1, 0])
+        box[0] = min(box[0], left)
+        box[1] = max(box[1], right)
+        box[2] = min(box[2], y)
+        box[3] = max(box[3], y)
+        box[4] += right - left + 1
+    return [tuple(v) for v in boxes.values()]
+
+
+def _regular_candle_run(candles: list[dict[str, Any]], cw: int) -> list[dict[str, Any]]:
+    """Keep the densest regularly-spaced candle sequence and discard UI glyphs.
+
+    Broker candles are almost equally spaced horizontally. Price text/icons can also
+    be red/green, but they normally appear as tiny duplicate components or as an
+    isolated group beyond a large gap. This filter removes those without inventing
+    missing candles.
+    """
+    if len(candles) < 6:
+        return candles
+
+    candles = sorted(candles, key=lambda c: float(c["x"]))
+    xs = np.array([float(c["x"]) for c in candles], dtype=float)
+    gaps = np.diff(xs)
+    useful = gaps[(gaps >= max(3.0, cw * 0.008)) & (gaps <= cw * 0.14)]
+    if useful.size < 3:
+        return candles
+
+    spacing = float(np.median(useful))
+
+    # If two candidates are much closer than the normal candle spacing, they are
+    # usually split wick/body fragments or coloured UI text. Keep the stronger one.
+    min_gap = max(3.0, spacing * 0.72)
+    de_duped: list[dict[str, Any]] = []
+    for c in candles:
+        if de_duped and float(c["x"]) - float(de_duped[-1]["x"]) < min_gap:
+            if float(c.get("pixels") or 0) > float(de_duped[-1].get("pixels") or 0):
+                de_duped[-1] = c
+        else:
+            de_duped.append(c)
+
+    if len(de_duped) < 6:
+        return de_duped
+
+    xs = np.array([float(c["x"]) for c in de_duped], dtype=float)
+    gaps = np.diff(xs)
+    useful = gaps[(gaps >= max(3.0, cw * 0.008)) & (gaps <= cw * 0.14)]
+    spacing = float(np.median(useful)) if useful.size else spacing
+    split_gap = max(18.0, cw * 0.078, spacing * 1.60)
+
+    runs: list[list[dict[str, Any]]] = []
+    run_start = 0
+    for i, gap in enumerate(gaps):
+        if gap > split_gap:
+            runs.append(de_duped[run_start:i + 1])
+            run_start = i + 1
+    runs.append(de_duped[run_start:])
+    runs.sort(
+        key=lambda seq: (len(seq), sum(float(c.get("pixels") or 0) for c in seq)),
+        reverse=True,
+    )
+    best = runs[0]
+    return best if len(best) >= 4 else de_duped
+
+
+def _detect_candles_in_chart(chart: np.ndarray) -> tuple[list[dict[str, Any]], float, list[str], float, float]:
+    """Detect red/green candles with mobile-safe 2D component clustering.
+
+    V9.1 fixes the V9 mobile under-count where 14+ visible Pocket Option candles
+    could be reported as 7 because the old X-axis grouping was contaminated by
+    wide coloured interface bars. No indicator values are used; geometry remains
+    visual-only body/wick estimation.
     """
     ch, cw, _ = chart.shape
     quality, quality_notes = _quality_score(chart)
@@ -515,58 +639,109 @@ def _detect_candles_in_chart(chart: np.ndarray) -> tuple[list[dict[str, Any]], f
     g = chart[:, :, 1].astype(np.int16)
     b = chart[:, :, 2].astype(np.int16)
 
-    red = (r > 100) & ((r - g) > 24) & ((r - b) > 8)
-    green = (g > 90) & ((g - r) > 20) & ((g - b) > -28)
-    cyan = (g > 105) & (b > 105) & (r < 165) & (((g + b) - 2 * r) > 45)
+    # Slightly more tolerant masks for compressed/phone screenshots. Dominance
+    # checks still exclude the dark blue/purple broker background.
+    red = (r > 84) & ((r - g) > 16) & ((r - b) > 3)
+    green = (g > 64) & ((g - r) > 10) & ((g - b) > -42)
+    cyan = (g > 88) & (b > 88) & (r < 185) & (((g + b) - 2 * r) > 24)
     bull = green | cyan
     colored = red | bull
 
-    per_col = colored.sum(axis=0)
-    threshold = max(2, int(ch * 0.0038))
-    active = per_col >= threshold
-    groups = _group_columns(active)
+    # Suppress only near-full-width coloured UI bands. 2D components already make
+    # normal BUY/SELL buttons harmless because their width is rejected below.
+    row_counts = colored.sum(axis=1)
+    broad_rows = row_counts > max(80, int(cw * 0.52))
+    clean_red = red.copy()
+    clean_bull = bull.copy()
+    clean_colored = colored.copy()
+    if broad_rows.any():
+        clean_red[broad_rows, :] = False
+        clean_bull[broad_rows, :] = False
+        clean_colored[broad_rows, :] = False
+
+    min_pixels = max(14, min(70, int(ch * cw * 0.00020)))
+    max_width = max(32, int(cw * 0.080))
+    max_height = max(55, int(ch * 0.50))
+    seeds: list[dict[str, Any]] = []
+
+    # Label bullish and bearish colours separately so adjacent opposite candles do
+    # not merge into one component when their anti-aliased edges touch.
+    for direction, mask in ((-1, clean_red), (1, clean_bull)):
+        for left, right, top, bottom, pixels in _connected_color_components(mask):
+            width = right - left + 1
+            height = bottom - top + 1
+            if pixels < min_pixels or width > max_width or height < 4 or height > max_height:
+                continue
+            # Reject flat coloured labels; doji/small bodies are still allowed.
+            if width > max(12, int(cw * 0.040)) and height < max(5, int(width * 0.20)):
+                continue
+            density = float(pixels / max(1, width * height))
+            if density < 0.045:
+                continue
+            seeds.append({
+                "left": int(left), "right": int(right), "top": int(top), "bottom": int(bottom),
+                "pixels": int(pixels), "dir": int(direction),
+            })
+
+    seeds.sort(key=lambda s: (s["left"] + s["right"]) / 2.0)
+
+    # Merge/replace only components centered at effectively the same X position.
+    same_x = max(3, int(cw * 0.009))
+    de_duped_seeds: list[dict[str, Any]] = []
+    for seed in seeds:
+        cx = (seed["left"] + seed["right"]) / 2.0
+        if de_duped_seeds:
+            prev = de_duped_seeds[-1]
+            pcx = (prev["left"] + prev["right"]) / 2.0
+            if abs(cx - pcx) <= same_x:
+                if seed["pixels"] > prev["pixels"]:
+                    de_duped_seeds[-1] = seed
+                continue
+        de_duped_seeds.append(seed)
 
     candles: list[dict[str, Any]] = []
-    max_width = max(46, int(cw * 0.065))
-    for left, right in groups:
+    for seed in de_duped_seeds:
+        left, right = seed["left"], seed["right"]
+        top, bottom = seed["top"], seed["bottom"]
+        direction = int(seed["dir"])
         width = right - left + 1
-        if width > max_width:
-            continue
-        block = colored[:, left:right + 1]
-        ys, _ = np.where(block)
-        if len(ys) < 5:
-            continue
-        top, bottom = int(ys.min()), int(ys.max())
-        height = int(bottom - top + 1)
-        if height < 3 or height > int(ch * 0.72):
-            continue
+        height = bottom - top + 1
 
-        red_count = int(red[:, left:right + 1].sum())
-        bull_count = int(bull[:, left:right + 1].sum())
-        direction = 1 if bull_count >= red_count else -1
+        # Expand only locally to recover a wick that may be a thin/disconnected
+        # anti-aliased line. Never search the whole column, which could capture UI.
+        xpad = max(1, min(3, width // 4))
+        ypad = max(5, min(int(ch * 0.07), int(height * 0.65)))
+        xl, xr = max(0, left - xpad), min(cw - 1, right + xpad)
+        yt, yb = max(0, top - ypad), min(ch - 1, bottom + ypad)
+        local = clean_colored[yt:yb + 1, xl:xr + 1]
+        ys, _ = np.where(local)
+        if ys.size:
+            full_top = yt + int(ys.min())
+            full_bottom = yt + int(ys.max())
+        else:
+            full_top, full_bottom = top, bottom
 
-        # Estimate body from rows that contain a wider run of candle-colour pixels.
-        row_counts = block.sum(axis=1).astype(np.int32)
-        max_row = int(row_counts.max()) if row_counts.size else 0
+        full_height = max(1, full_bottom - full_top + 1)
+        own_mask = clean_bull if direction > 0 else clean_red
+        body_block = own_mask[full_top:full_bottom + 1, left:right + 1]
+        row_counts_body = body_block.sum(axis=1).astype(np.int32)
+        max_row = int(row_counts_body.max()) if row_counts_body.size else 0
         if max_row >= 2:
-            body_thr = max(2, int(math.ceil(max_row * 0.55)))
-            body_rows = np.where(row_counts >= body_thr)[0]
+            body_thr = max(2, int(math.ceil(max_row * 0.50)))
+            body_rows = np.where(row_counts_body >= body_thr)[0]
         else:
             body_rows = np.array([], dtype=int)
 
         if body_rows.size:
-            body_top, body_bottom = int(body_rows.min()), int(body_rows.max())
+            body_top = full_top + int(body_rows.min())
+            body_bottom = full_top + int(body_rows.max())
         else:
-            # Very thin/compressed candle: keep a conservative small central body.
-            mid = int(round(float(np.median(ys))))
-            half = max(1, int(round(height * 0.14)))
-            body_top = max(top, mid - half)
-            body_bottom = min(bottom, mid + half)
+            body_top, body_bottom = top, bottom
 
         body_height = max(1, body_bottom - body_top + 1)
-        upper_wick = max(0, body_top - top)
-        lower_wick = max(0, bottom - body_bottom)
-        range_px = float(max(1, height))
+        upper_wick = max(0, body_top - full_top)
+        lower_wick = max(0, full_bottom - body_bottom)
+        range_px = float(max(1, full_height))
         body_ratio = float(body_height / range_px)
         open_y = float(body_bottom if direction > 0 else body_top)
         close_y = float(body_top if direction > 0 else body_bottom)
@@ -574,44 +749,21 @@ def _detect_candles_in_chart(chart: np.ndarray) -> tuple[list[dict[str, Any]], f
         candles.append({
             "x": float((left + right) / 2.0),
             "y": float((body_top + body_bottom) / 2.0),
-            "top": top,
-            "bottom": bottom,
-            "body_top": body_top,
-            "body_bottom": body_bottom,
+            "top": int(full_top), "bottom": int(full_bottom),
+            "body_top": int(body_top), "body_bottom": int(body_bottom),
             "body_height": float(body_height),
-            "upper_wick": float(upper_wick),
-            "lower_wick": float(lower_wick),
-            "body_ratio": body_ratio,
-            "open_y": open_y,
-            "close_y": close_y,
-            "dir": direction,
-            "pixels": int(len(ys)),
-            "range": range_px,
+            "upper_wick": float(upper_wick), "lower_wick": float(lower_wick),
+            "body_ratio": body_ratio, "open_y": open_y, "close_y": close_y,
+            "dir": direction, "pixels": int(seed["pixels"]), "range": range_px,
         })
 
-    merged: list[dict[str, Any]] = []
-    merge_gap = max(3, int(cw * 0.0045))
-    for c in candles:
-        if merged and abs(c["x"] - merged[-1]["x"]) <= merge_gap:
-            prev = merged[-1]
-            # Keep the stronger/larger component when UI anti-aliasing splits one candle.
-            if c["pixels"] > prev["pixels"]:
-                merged[-1] = dict(c)
-            else:
-                prev["top"] = min(prev["top"], c["top"])
-                prev["bottom"] = max(prev["bottom"], c["bottom"])
-                prev["range"] = float(prev["bottom"] - prev["top"] + 1)
-        else:
-            merged.append(dict(c))
-
-    candles = merged[-80:]
+    candles = _regular_candle_run(candles, cw)[-80:]
     if len(candles) >= 2:
         span = float((candles[-1]["x"] - candles[0]["x"]) / max(cw, 1))
     else:
         span = 0.0
     density = float(colored.mean())
     return candles, quality, quality_notes, max(0.0, span), density
-
 
 def _candidate_chart_regions(arr: np.ndarray) -> list[tuple[str, np.ndarray]]:
     """Return desktop + mobile chart crops; the engine scores and chooses the best one."""
@@ -620,6 +772,9 @@ def _candidate_chart_regions(arr: np.ndarray) -> list[tuple[str, np.ndarray]]:
     specs: list[tuple[str, float, float, float, float]]
     if portrait:
         specs = [
+            ("mobile-chart-tight", 0.01, 0.99, 0.12, 0.64),
+            ("mobile-chart-mid", 0.01, 0.99, 0.10, 0.68),
+            ("mobile-chart-core", 0.03, 0.97, 0.14, 0.70),
             ("mobile-upper", 0.01, 0.99, 0.10, 0.72),
             ("mobile-middle", 0.01, 0.99, 0.18, 0.84),
             ("mobile-lower", 0.01, 0.99, 0.28, 0.96),
@@ -709,7 +864,7 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
             "confluence_count": 0, "setup_quality": "LOW",
             "reasons": ["Insufficient readable candle structure for pattern recognition."], "warnings": warnings,
             "pattern_status": {"Candle geometry": "Unreadable", "Pattern context": "Unreadable"},
-            "engine": "RAJA Pattern-Only Engine V9 · V8 Scan Gate", "analysis_crop_mode": crop_name,
+            "engine": "RAJA Pattern-Only Engine V9.1 · Candle Count Fix + V8 Scan Gate", "analysis_crop_mode": crop_name,
             **legacy_aliases("NO CLEAN PATTERN", "NONE", 0.0, [], library, 29),
         }
 
@@ -930,7 +1085,7 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
             "Context": f"Visual candle context: {context_label}",
             "Candle geometry": f"{count} candle-like structures with body/wick estimates",
         },
-        "engine": "RAJA Pattern-Only Engine V9 · V8 Focus + Scan Gate", "analysis_crop_mode": crop_name,
+        "engine": "RAJA Pattern-Only Engine V9.1 · Candle Count Fix + V8 Focus + Scan Gate", "analysis_crop_mode": crop_name,
     }
     result.update(legacy_aliases(selected, selected_dir, round(best_score,1), pattern_signals, library, 29))
     return result
