@@ -55,10 +55,11 @@
   <main>
     <section id="tab-scan" class="tabPage">
       <div class="card hero">
-        <div class="eyebrow">Mobile Visual Scanner V2</div>
+        <div class="eyebrow">Classic TA Visual Scanner V4</div>
         <h2>Scan a chart in seconds</h2>
         <p>Use the camera or upload a Quotex / Pocket Option chart screenshot. RAJA checks readable candle structure, visual trend, momentum and volatility, then returns <b>UP BIAS</b>, <b>DOWN BIAS</b> or <b>NO TRADE</b>.</p>
         <div class="statusRow"><span class="chip" id="accessChip">🔒 Access locked</span><span class="chip">📷 Camera + Screenshot</span><span class="chip warn">No guaranteed outcome</span></div>
+      <div class="notice" style="margin-top:9px">Strategy library is decision support only. Short-expiry binary options remain high risk; conflicting setups stay NO TRADE.</div>
       </div>
 
       <div class="card" id="scannerCard">
@@ -84,7 +85,7 @@
         </div>
         <div class="preview" id="preview"><img id="previewImg" alt="Chart preview"><div class="fileMeta" id="fileMeta"></div></div>
         <button class="btn scanBtn" id="analyzeBtn" disabled>✨ ANALYZE CHART</button>
-        <div class="notice">For best results, use a clear chart with visible candles. The V2 visual engine does not invent exact RSI/EMA/MACD values from pixels when reliable OHLC data is not available.</div>
+        <div class="notice">For best results, use a clear chart with visible candles. The V4 strategy engine uses classical technical-analysis visual proxies and does not invent exact RSI/EMA/MACD values when reliable OHLC data is unavailable.</div>
       </div>
 
       <div class="card result" id="resultCard">
@@ -93,11 +94,12 @@
         <div class="kv">
           <div><small>Trend</small><b id="trendText">--</b></div><div><small>Momentum</small><b id="momentumText">--</b></div>
           <div><small>Volatility</small><b id="volText">--</b></div><div><small>Candles Read</small><b id="candlesText">--</b></div>
-          <div><small>Image Quality</small><b id="qualityText">--</b></div><div><small>Engine</small><b id="engineText">Strategy V3</b></div>
+          <div><small>Image Quality</small><b id="qualityText">--</b></div><div><small>Engine</small><b id="engineText">Strategy V4</b></div>
           <div><small>Best Strategy</small><b id="strategyText">--</b></div><div><small>Strategy Score</small><b id="strategyScoreText">--</b></div>
           <div><small>Confluence</small><b id="confluenceText">--</b></div><div><small>Setup Quality</small><b id="setupQualityText">--</b></div>
+          <div><small>Strategy Library</small><b id="libraryText">15 Classic TA Setups</b></div><div><small>Safety Gate</small><b>Confluence + NO TRADE</b></div>
         </div>
-        <h4 class="sectionTitle" style="margin-top:13px">Strategy Confirmations</h4>
+        <h4 class="sectionTitle" style="margin-top:13px">Classic TA Strategy Confirmations</h4>
         <div class="indicatorGrid" id="strategyGrid"></div>
         <h4 class="sectionTitle" style="margin-top:13px">Why</h4><ul class="list" id="reasons"></ul>
         <div class="warnBox hide" id="warnings"></div>
@@ -180,7 +182,8 @@ function renderResult(x){
   $('volText').textContent=x.volatility||'--';
   $('candlesText').textContent=x.detected_candles??'--';
   $('qualityText').textContent=`${Number(x.image_quality_score||0).toFixed(0)}/100`;
-  $('engineText').textContent=x.engine||'Strategy V3';
+  $('engineText').textContent=x.engine||'Strategy V4';
+  $('libraryText').textContent=x.strategy_library||`${Number(x.strategy_library_size||15)} Classic TA Setups`;
   $('strategyText').textContent=x.selected_strategy||'--';
   $('strategyScoreText').textContent=`${Number(x.strategy_score||0).toFixed(0)}% ${x.strategy_direction&&x.strategy_direction!=='NONE'?'· '+x.strategy_direction:''}`;
   $('confluenceText').textContent=`${Number(x.confluence_count||0)} confirmations`;
