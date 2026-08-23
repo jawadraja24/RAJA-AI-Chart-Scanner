@@ -1085,7 +1085,7 @@ def analyze_chart_image(raw: bytes) -> dict[str, Any]:
             "Context": f"Visual candle context: {context_label}",
             "Candle geometry": f"{count} candle-like structures with body/wick estimates",
         },
-        "engine": "RAJA Pattern-Only Engine V9.2 · Candle Count Fix + V8 Focus + Scan Gate", "analysis_crop_mode": crop_name,
+        "engine": "RAJA Pattern-Only Engine V9.3 · Tap Candle Focus + Candle Count Fix + Scan Gate", "analysis_crop_mode": crop_name,
     }
     result.update(legacy_aliases(selected, selected_dir, round(best_score,1), pattern_signals, library, 29))
     return result
