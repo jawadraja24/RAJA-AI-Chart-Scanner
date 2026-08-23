@@ -20,7 +20,7 @@
     .sectionTitle{font-size:14px;font-weight:900;margin:0 0 10px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.btn{border:0;border-radius:14px;padding:13px 12px;font-weight:900;font-size:12px;cursor:pointer;color:white;background:linear-gradient(135deg,#7c3aed,#9333ea);box-shadow:0 8px 18px rgba(124,58,237,.18)}.btn.secondary{background:#21183b;border:1px solid var(--line);box-shadow:none}.btn.green{background:linear-gradient(135deg,#16a34a,#22c55e)}.btn.red{background:linear-gradient(135deg,#dc2626,#ef4444)}.btn.amber{background:linear-gradient(135deg,#d97706,#f59e0b)}.btn:disabled{opacity:.45;cursor:not-allowed}
     label{display:block;font-size:10px;font-weight:800;color:#c4b5fd;margin:9px 0 5px;text-transform:uppercase;letter-spacing:.7px}.input,select{width:100%;border-radius:12px;border:1px solid var(--line);background:#0d0a18;color:white;padding:11px 12px;font-size:12px;outline:none}.input:focus,select:focus{border-color:#8b5cf6;box-shadow:0 0 0 3px rgba(139,92,246,.12)}
     .preview{display:none;margin-top:12px;border-radius:15px;border:1px solid var(--line);background:#05040a;overflow:hidden}.preview img{width:100%;max-height:360px;object-fit:contain;display:block}.fileMeta{padding:8px 10px;color:#a1a1aa;font-size:10px}.scanBtn{width:100%;margin-top:10px;padding:14px;font-size:13px}
-    .result{display:none}.bias{border-radius:15px;padding:16px;text-align:center;margin-bottom:10px;border:1px solid var(--line);background:#0c0916}.bias .big{font-size:27px;font-weight:1000;letter-spacing:.5px}.bias.up .big{color:#4ade80}.bias.down .big{color:#fb7185}.bias.no .big{color:#fbbf24}.confidence{font-size:12px;color:#cbd5e1;margin-top:5px}.meter{height:9px;background:#0b0814;border-radius:999px;overflow:hidden;margin-top:9px}.meter span{display:block;height:100%;background:linear-gradient(90deg,#7c3aed,#c084fc);width:0}
+    .result{display:none}.bias{border-radius:15px;padding:16px;text-align:center;margin-bottom:10px;border:1px solid var(--line);background:#0c0916}.bias .big{font-size:27px;font-weight:1000;letter-spacing:.5px}.signalArrow{font-size:38px;line-height:1;font-weight:1000;margin-bottom:4px}.signalMeta{margin-top:7px;font-size:11px;font-weight:900;color:#ddd6fe;letter-spacing:.25px}.signalSubMeta{margin-top:3px;font-size:9px;color:#a1a1aa;font-weight:800}.bias.up .big{color:#4ade80}.bias.down .big{color:#fb7185}.bias.no .big{color:#fbbf24}.confidence{font-size:12px;color:#cbd5e1;margin-top:5px}.meter{height:9px;background:#0b0814;border-radius:999px;overflow:hidden;margin-top:9px}.meter span{display:block;height:100%;background:linear-gradient(90deg,#7c3aed,#c084fc);width:0}
     .kv{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}.kv div{background:#0d0a18;border:1px solid rgba(255,255,255,.05);border-radius:12px;padding:10px}.kv small{display:block;color:#8b8b9d;font-size:9px;text-transform:uppercase;font-weight:800}.kv b{display:block;margin-top:3px;font-size:12px}.list{margin:8px 0 0;padding-left:18px;color:#d1d5db;font-size:11px;line-height:1.55}.warnBox{background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.22);border-radius:12px;padding:10px;color:#fde68a;font-size:10px;margin-top:9px}
     .indicatorGrid{display:grid;gap:7px}.indicator{display:flex;justify-content:space-between;gap:12px;background:#0d0a18;border:1px solid rgba(255,255,255,.05);padding:9px 10px;border-radius:11px}.indicator b{font-size:10px}.indicator span{font-size:9px;color:#a1a1aa;text-align:right}
     .historyItem{padding:11px 0;border-bottom:1px solid rgba(255,255,255,.06)}.historyItem:last-child{border-bottom:0}.historyTop{display:flex;justify-content:space-between;gap:8px}.historyItem b{font-size:12px}.historyItem small{color:#9ca3af;font-size:9px}.tag{font-size:9px;font-weight:900;padding:4px 7px;border-radius:999px;background:#261a47;color:#d8b4fe}.tag.up{background:rgba(34,197,94,.12);color:#86efac}.tag.down{background:rgba(239,68,68,.12);color:#fda4af}.tag.no{background:rgba(245,158,11,.12);color:#fcd34d}
@@ -95,11 +95,11 @@
 
       <div class="card result" id="resultCard">
         <h3 class="sectionTitle">✨ Analysis Result</h3>
-        <div class="bias no" id="biasBox"><div class="big" id="biasText">NO TRADE</div><div class="confidence">Confidence <b id="confidenceText">--</b></div><div class="meter"><span id="confidenceBar"></span></div></div>
+        <div class="bias no" id="biasBox"><div class="signalArrow" id="signalArrow">⏸</div><div class="big" id="biasText">NO TRADE</div><div class="signalMeta" id="signalMeta">PAIR --</div><div class="signalSubMeta" id="signalSubMeta">-- · --</div><div class="confidence">Confidence <b id="confidenceText">--</b></div><div class="meter"><span id="confidenceBar"></span></div></div>
         <div class="kv">
           <div><small>Trend</small><b id="trendText">--</b></div><div><small>Momentum</small><b id="momentumText">--</b></div>
           <div><small>Volatility</small><b id="volText">--</b></div><div><small>Candles Read</small><b id="candlesText">--</b></div>
-          <div><small>Image Quality</small><b id="qualityText">--</b></div><div><small>Engine</small><b id="engineText">Strategy V4 + V5 UX</b></div>
+          <div><small>Image Quality</small><b id="qualityText">--</b></div><div><small>Engine</small><b id="engineText">Strategy V4 + Mobile Adaptive</b></div>
           <div><small>Best Strategy</small><b id="strategyText">--</b></div><div><small>Strategy Score</small><b id="strategyScoreText">--</b></div>
           <div><small>Confluence</small><b id="confluenceText">--</b></div><div><small>Setup Quality</small><b id="setupQualityText">--</b></div>
           <div><small>Strategy Library</small><b id="libraryText">15 Classic TA Setups</b></div><div><small>Safety Gate</small><b>Confluence + NO TRADE</b></div>
@@ -178,8 +178,15 @@ async function analyze(){if(!selectedFile)return;const ok=await refreshSession()
 function renderResult(x){
   $('resultCard').style.display='block';
   const box=$('biasBox'),bias=String(x.bias||'NO TRADE');
-  box.className='bias '+(bias.startsWith('UP')?'up':bias.startsWith('DOWN')?'down':'no');
-  $('biasText').textContent=bias;
+  const isUp=bias.startsWith('UP'),isDown=bias.startsWith('DOWN');
+  box.className='bias '+(isUp?'up':isDown?'down':'no');
+  $('signalArrow').textContent=isUp?'⬆':isDown?'⬇':'⏸';
+  $('biasText').textContent=isUp?'UP SIGNAL':isDown?'DOWN SIGNAL':'NO TRADE';
+  const pair=String(x.pair||$('pair').value||'Unknown Pair');
+  const broker=String(x.broker||$('broker').value||'--');
+  const tf=String(x.timeframe||$('timeframe').value||'--');
+  $('signalMeta').textContent=`PAIR: ${pair}`;
+  $('signalSubMeta').textContent=`${broker} · ${tf}`;
   $('confidenceText').textContent=`${Number(x.confidence||0).toFixed(1)}%`;
   $('confidenceBar').style.width=`${Math.max(0,Math.min(100,Number(x.confidence||0)))}%`;
   $('trendText').textContent=x.visual_trend||'--';
@@ -329,14 +336,14 @@ function tickEntryTimer(){
   const remaining=activeEntryEpochMs-now, secRemain=Math.ceil(remaining/1000), bias=String(activeSignal.bias||'');
   if(remaining>0){
     $('entryStatus').textContent=`SIGNAL READY — WAIT FOR CURRENT ${tf} CANDLE TO CLOSE`;
-    $('entryAlert').textContent=`⏳ ${bias} · ENTRY ALERT ON NEXT ${tf} CANDLE OPEN`;
+    const pair=String(activeSignal.pair||$('pair').value||'');$('entryAlert').textContent=`⏳ ${bias} · ${pair} · ENTRY ALERT ON NEXT ${tf} CANDLE OPEN`;
     if(secRemain===10&&!entryCountdownDone.has(10)){entryCountdownDone.add(10);attention10()}
     [5,4,3,2,1].forEach(n=>{if(secRemain===n&&!entryCountdownDone.has(n)){entryCountdownDone.add(n);countdownTick()}});
   } else {
     const late=-remaining;
     if(late<=5000){
       $('entryStatus').textContent=`NEW ${tf} CANDLE OPENED`;
-      $('entryAlert').textContent=`✅ ENTRY NOW — ${bias}`;
+      const pair=String(activeSignal.pair||$('pair').value||'');$('entryAlert').textContent=`✅ ENTRY NOW — ${bias} · ${pair}`;
       if(!activeEntryDone){activeEntryDone=true;const up=bias.startsWith('UP');directionTone(up);flash(up?'up':'down');pulseResult(up?'up':'down')}
     } else {
       $('entryStatus').textContent='ENTRY WINDOW CLOSED';$('entryAlert').textContent='↻ Re-scan before considering another entry.';
