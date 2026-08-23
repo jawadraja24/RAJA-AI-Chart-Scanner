@@ -1,5 +1,5 @@
-const CACHE='raja-scanner-v5-shell-1';
-const SHELL=['/','/manifest.json','/static/raja-ai-icon-192.png','/static/raja-ai-icon-512.png'];
+const CACHE='raja-scanner-v7-shell-1';
+const SHELL=['/manifest.json','/static/raja-ai-icon-192.png','/static/raja-ai-icon-512.png'];
 
 self.addEventListener('install',event=>{
   event.waitUntil(
@@ -28,7 +28,13 @@ self.addEventListener('fetch',event=>{
     url.origin!==location.origin ||
     url.pathname.startsWith('/api/') ||
     url.pathname==='/share-target'
-  ){
+  ) return;
+
+  if(req.mode==='navigate'){
+    event.respondWith(
+      fetch(req,{cache:'no-store'})
+        .catch(()=>caches.match('/'))
+    );
     return;
   }
 
@@ -45,9 +51,6 @@ self.addEventListener('fetch',event=>{
 
         return res;
       })
-      .catch(()=>
-        caches.match(req)
-          .then(r=>r||caches.match('/'))
-      )
-  )
+      .catch(()=>caches.match(req))
+  );
 });
