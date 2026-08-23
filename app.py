@@ -624,6 +624,65 @@ def _regular_candle_run(candles: list[dict[str, Any]], cw: int) -> list[dict[str
     return best if len(best) >= 4 else de_duped
 
 
+def _adaptive_candle_color_masks(chart: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
+    """Return bearish/bullish candle masks with phone/theme adaptive colour thresholds.
+
+    This is deterministic computer vision (not an external ML model): it adapts saturation
+    and brightness floors to each frame, then combines hue-like channel dominance with
+    the older fixed masks. It is intentionally lightweight for Render and older phones.
+    """
+    rgb = chart.astype(np.float32)
+    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+    mx = np.maximum(np.maximum(r, g), b)
+    mn = np.minimum(np.minimum(r, g), b)
+    chroma = mx - mn
+    sat = chroma / np.maximum(mx, 1.0)
+    value = mx / 255.0
+
+    bright = value > 0.16
+    sat_sample = sat[bright]
+    if sat_sample.size:
+        sat_floor = float(np.clip(np.percentile(sat_sample, 42), 0.12, 0.24))
+    else:
+        sat_floor = 0.16
+
+    # Theme/phone adaptive dominance floors. Purple/blue backgrounds are rejected by
+    # requiring a clear red or green/cyan dominance plus meaningful saturation.
+    red_dom = r - np.maximum(g, b * 0.84)
+    green_dom = g - r
+    cyan_dom = ((g + b) * 0.5) - r
+    red_pos = red_dom[(red_dom > 0) & bright & (sat >= sat_floor)]
+    green_pos = green_dom[(green_dom > 0) & bright & (sat >= sat_floor * 0.75)]
+    red_floor = float(np.clip(np.percentile(red_pos, 35), 8, 18)) if red_pos.size else 11.0
+    green_floor = float(np.clip(np.percentile(green_pos, 30), 5, 14)) if green_pos.size else 7.0
+
+    adaptive_red = (value >= 0.22) & (sat >= sat_floor) & (red_dom >= red_floor) & (r >= g + 5)
+    adaptive_green = (value >= 0.19) & (sat >= sat_floor * 0.72) & (green_dom >= green_floor) & (g >= b - 58)
+    adaptive_cyan = (value >= 0.22) & (sat >= sat_floor * 0.65) & (cyan_dom >= 10) & (g >= r + 6) & (b >= r - 8)
+
+    # Preserve proven V9/V10 masks as a fallback for clean screenshots.
+    fixed_red = (r > 84) & ((r - g) > 16) & ((r - b) > 3)
+    fixed_green = (g > 64) & ((g - r) > 10) & ((g - b) > -42)
+    fixed_cyan = (g > 88) & (b > 88) & (r < 185) & (((g + b) - 2 * r) > 24)
+
+    red = adaptive_red | fixed_red
+    bull = adaptive_green | adaptive_cyan | fixed_green | fixed_cyan
+    # Pixels that accidentally satisfy both are ambiguous and are discarded.
+    overlap = red & bull
+    if overlap.any():
+        red = red & ~overlap
+        bull = bull & ~overlap
+
+    meta = {
+        "sat_floor": round(sat_floor, 3),
+        "red_floor": round(red_floor, 1),
+        "green_floor": round(green_floor, 1),
+        "red_density": round(float(red.mean()), 6),
+        "bull_density": round(float(bull.mean()), 6),
+    }
+    return red, bull, meta
+
+
 def _detect_candles_in_chart(chart: np.ndarray) -> tuple[list[dict[str, Any]], float, list[str], float, float]:
     """Detect red/green candles with mobile-safe 2D component clustering.
 
@@ -635,16 +694,8 @@ def _detect_candles_in_chart(chart: np.ndarray) -> tuple[list[dict[str, Any]], f
     ch, cw, _ = chart.shape
     quality, quality_notes = _quality_score(chart)
 
-    r = chart[:, :, 0].astype(np.int16)
-    g = chart[:, :, 1].astype(np.int16)
-    b = chart[:, :, 2].astype(np.int16)
-
-    # Slightly more tolerant masks for compressed/phone screenshots. Dominance
-    # checks still exclude the dark blue/purple broker background.
-    red = (r > 84) & ((r - g) > 16) & ((r - b) > 3)
-    green = (g > 64) & ((g - r) > 10) & ((g - b) > -42)
-    cyan = (g > 88) & (b > 88) & (r < 185) & (((g + b) - 2 * r) > 24)
-    bull = green | cyan
+    # V11 Adaptive Vision Lens: per-frame red/green/cyan calibration.
+    red, bull, color_meta = _adaptive_candle_color_masks(chart)
     colored = red | bull
 
     # Suppress only near-full-width coloured UI bands. 2D components already make
@@ -797,8 +848,8 @@ def _candidate_chart_regions(arr: np.ndarray) -> list[tuple[str, np.ndarray]]:
             out.append((name, arr[y1:y2, x1:x2]))
     return out
 
-def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", last_outcome: str = "") -> dict[str, Any]:
-    """V10: strict SK Trading Club Pattern Type 1-25 scanner.
+def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", last_outcome: str = "", *, captured_at_close: bool = False) -> dict[str, Any]:
+    """V11: strict SK Trading Club Pattern Type 1-25 scanner.
 
     The older V9 candlestick/chart-pattern library is intentionally removed from
     signal decisions. This engine only evaluates the 25 user-supplied setup
@@ -858,10 +909,36 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
         crop_name, chart, candles, quality, quality_notes = best_region
 
     ch, cw, _ = chart.shape
-    count = len(candles)
+    detected_count = len(candles)
     warnings = list(quality_notes)
     reasons: list[str] = []
     library = "SK Trading Club Pattern Type 1-25"
+
+    # V11 Closed Candle Lock. A normal screenshot/live-now frame can contain a
+    # still-forming rightmost candle, so it is excluded from setup matching. A
+    # frame captured exactly at a candle boundary may include a newborn next candle;
+    # a tiny-range heuristic removes that newborn while preserving the just-closed one.
+    forming_candle_excluded = False
+    newborn_candle_excluded = False
+    observed_latest_direction = "UNKNOWN"
+    if candles:
+        observed_latest_direction = "GREEN" if candles[-1]["dir"] > 0 else "RED"
+    if len(candles) >= 2:
+        if not captured_at_close:
+            candles = candles[:-1]
+            forming_candle_excluded = True
+        elif len(candles) >= 4:
+            prior_ranges = np.array([float(c["range"]) for c in candles[-8:-1]], dtype=float)
+            prior_bodies = np.array([float(c["body_height"]) for c in candles[-8:-1]], dtype=float)
+            if prior_ranges.size and prior_bodies.size:
+                last = candles[-1]
+                tiny_newborn = (float(last["range"]) <= float(np.median(prior_ranges)) * 0.34
+                                and float(last["body_height"]) <= max(2.0, float(np.median(prior_bodies)) * 0.48))
+                if tiny_newborn:
+                    candles = candles[:-1]
+                    newborn_candle_excluded = True
+
+    count = len(candles)
 
     def legacy_aliases(pattern: str, direction: str, score: float, signals: list[dict[str, Any]], size: int = 25) -> dict[str, Any]:
         return {
@@ -877,7 +954,7 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
         warnings.append("Not enough candle structure was detected. Move closer to the chart and keep candles sharp.")
         return {
             "bias": "NO TRADE", "confidence": 0.0, "image_quality_score": quality,
-            "detected_candles": count, "visual_trend": "UNREADABLE", "momentum": "PATTERN TYPE 1-25", "volatility": "NOT USED",
+            "detected_candles": detected_count, "closed_candles_analyzed": count, "visual_trend": "UNREADABLE", "momentum": "PATTERN TYPE 1-25", "volatility": "NOT USED",
             "selected_pattern": "NO TYPE 1-25 SETUP", "pattern_direction": "NONE", "pattern_score": 0.0,
             "pattern_signals": [], "pattern_library": library, "pattern_library_size": 25,
             "confluence_count": 0, "setup_quality": "LOW", "next_candle_color": "NONE",
@@ -885,7 +962,8 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
             "latest_candle_direction": "UNKNOWN",
             "reasons": ["Insufficient readable candle structure for Pattern Type 1-25 recognition."], "warnings": warnings,
             "pattern_status": {"Candle geometry": "Unreadable", "Pattern library": "Type 1-25 only"},
-            "engine": "RAJA V10 · SK 25 Setup Engine + V9.4 AI Lens + Scan Gate", "analysis_crop_mode": crop_name,
+            "engine": "RAJA V11 · Strict SK25 + Adaptive Vision + Closed Candle Lock", "analysis_crop_mode": crop_name,
+            "timing_verified": bool(captured_at_close), "forming_candle_excluded": forming_candle_excluded, "newborn_candle_excluded": newborn_candle_excluded,
             **legacy_aliases("NO TYPE 1-25 SETUP", "NONE", 0.0, []),
         }
 
@@ -938,6 +1016,29 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
 
     def body_inside(inner: dict[str, Any], outer: dict[str, Any], extra: float = 0.0) -> bool:
         return float(inner["body_top"]) >= float(outer["body_top"]) - extra and float(inner["body_bottom"]) <= float(outer["body_bottom"]) + extra
+
+    def strongest_level_cluster(values: list[float], cluster_tol: float, prefer: str) -> tuple[float | None, int]:
+        """Cluster nearby visual highs/lows so S/R rules use repeated levels, not one pixel."""
+        if not values:
+            return None, 0
+        vals = sorted(float(v) for v in values)
+        clusters: list[list[float]] = []
+        for v in vals:
+            placed = False
+            for cl in clusters:
+                center = float(sum(cl) / len(cl))
+                if abs(v - center) <= cluster_tol:
+                    cl.append(v); placed = True; break
+            if not placed:
+                clusters.append([v])
+        clusters.sort(key=lambda cl: (len(cl), -abs(sum(cl) / len(cl))), reverse=True)
+        max_n = max(len(cl) for cl in clusters)
+        strongest = [cl for cl in clusters if len(cl) == max_n]
+        if prefer == "resistance":
+            chosen = min(strongest, key=lambda cl: sum(cl) / len(cl))  # smaller y = higher price
+        else:
+            chosen = max(strongest, key=lambda cl: sum(cl) / len(cl))  # larger y = lower price
+        return float(sum(chosen) / len(chosen)), len(chosen)
 
     is_otc = "OTC" in market_name.upper()
     is_live = "LIVE" in market_name.upper()
@@ -1062,10 +1163,10 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
     if count >= 7:
         prior = candles[-10:-1] if count >= 10 else candles[:-1]
         last = candles[-1]
-        resistance = float(min(x["top"] for x in prior))
-        support = float(max(x["bottom"] for x in prior))
-        res_touches = sum(1 for x in prior if abs(float(x["top"]) - resistance) <= tol * 1.25)
-        sup_touches = sum(1 for x in prior if abs(float(x["bottom"]) - support) <= tol * 1.25)
+        resistance, res_touches = strongest_level_cluster([float(x["top"]) for x in prior], tol * 1.25, "resistance")
+        support, sup_touches = strongest_level_cluster([float(x["bottom"]) for x in prior], tol * 1.25, "support")
+        resistance = float(resistance if resistance is not None else min(x["top"] for x in prior))
+        support = float(support if support is not None else max(x["bottom"] for x in prior))
         up_break = last["dir"] > 0 and close_breaks_above(last, resistance, 0.28)
         dn_break = last["dir"] < 0 and close_breaks_below(last, support, 0.28)
         add_setup(13, -1, [("2-minute timeframe", tf == "2m"), ("Resistance retested several times", res_touches >= 2), ("Latest GREEN breaks resistance", up_break)],
@@ -1079,26 +1180,14 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
         last = candles[-1]
         greens = [x for x in prior if x["dir"] > 0]
         reds = [x for x in prior if x["dir"] < 0]
-        support_pair = None
-        for i in range(len(greens)):
-            for j in range(i+1, len(greens)):
-                if abs(float(greens[i]["bottom"]) - float(greens[j]["bottom"])) <= tol * 1.25:
-                    support_pair = (greens[i], greens[j]); break
-            if support_pair: break
-        resistance_pair = None
-        for i in range(len(reds)):
-            for j in range(i+1, len(reds)):
-                if abs(float(reds[i]["top"]) - float(reds[j]["top"])) <= tol * 1.25:
-                    resistance_pair = (reds[i], reds[j]); break
-            if resistance_pair: break
-        if support_pair:
-            support = (float(support_pair[0]["bottom"]) + float(support_pair[1]["bottom"])) / 2.0
-            add_setup(14, -1, [("Two GREEN candles define support", True), ("Latest candle is RED", last["dir"] < 0), ("RED closes below support", close_breaks_below(last, support, 0.25))],
-                      "Horizontal support breakdown", "A red candle breaks the support created by two green candles; the strategy targets the next candle RED.", family="Horizontal Break")
-        if resistance_pair:
-            resistance = (float(resistance_pair[0]["top"]) + float(resistance_pair[1]["top"])) / 2.0
-            add_setup(14, 1, [("Two RED candles define resistance", True), ("Latest candle is GREEN", last["dir"] > 0), ("GREEN closes above resistance", close_breaks_above(last, resistance, 0.25))],
-                      "Horizontal resistance breakout", "A green candle breaks the resistance created by two red candles; the strategy targets the next candle GREEN.", family="Horizontal Break")
+        support, support_touches = strongest_level_cluster([float(x["bottom"]) for x in greens], tol * 1.25, "support")
+        resistance, resistance_touches = strongest_level_cluster([float(x["top"]) for x in reds], tol * 1.25, "resistance")
+        if support is not None and support_touches >= 2:
+            add_setup(14, -1, [("2+ GREEN candles define one support cluster", True), ("Latest candle is RED", last["dir"] < 0), ("RED closes below clustered support", close_breaks_below(last, support, 0.25))],
+                      "Clustered horizontal support breakdown", "A red candle breaks support confirmed by repeated green-candle lows; the strategy targets the next candle RED.", family="Horizontal Break")
+        if resistance is not None and resistance_touches >= 2:
+            add_setup(14, 1, [("2+ RED candles define one resistance cluster", True), ("Latest candle is GREEN", last["dir"] > 0), ("GREEN closes above clustered resistance", close_breaks_above(last, resistance, 0.25))],
+                      "Clustered horizontal resistance breakout", "A green candle breaks resistance confirmed by repeated red-candle highs; the strategy targets the next candle GREEN.", family="Horizontal Break")
 
     # TYPE 15 - V / inverted-V breakout, then opposite-direction target.
     if count >= 7:
@@ -1201,13 +1290,29 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
         add_setup(25, 1, [("RED, RED, GREEN setup", seq_is([a,b,c],[-1,-1,1])), ("1st RED is small/Doji", is_small(a)), ("2nd RED has normal body", is_normal(b)), ("3rd GREEN is long", is_long(c)), ("Long GREEN breaks 1st RED SNR", close_breaks_above(c, snr, 0.20))],
                   "Small RED + normal RED + long GREEN SNR breakout", "The long green candle breaks the SNR level created by the first small red candle; the strategy targets the next candle GREEN.", family="SNR Breakout")
 
-    # Exact setups win over near matches. More specific rule sets win ties.
+    # V11 conflict gate: an opposite exact setup is never overridden by a numeric
+    # priority. Same-direction exact setups reinforce one another; opposite exact
+    # setups produce NO TRADE until the chart resolves.
     exact.sort(key=lambda s: (int(s.get("priority") or 0), int(s["rules_total"]), int(s["pattern_type"])), reverse=True)
     near.sort(key=lambda s: (float(s["score"]), int(s["rules_total"])), reverse=True)
-    best = exact[0] if exact else None
+    exact_directions = {str(x.get("direction") or "") for x in exact}
+    conflict_gate = len({x for x in exact_directions if x in {"UP", "DOWN"}}) > 1
+    best = None if conflict_gate else (exact[0] if exact else None)
     best_near = near[0] if near else None
 
-    if best:
+    if conflict_gate:
+        bias = "NO TRADE"
+        next_color = "NONE"
+        selected_dir = "NONE"
+        setup_quality = "LOW"
+        selected = "CONFLICTING TYPE SETUPS"
+        match_score = 100.0
+        confidence = 0.0
+        signals_out = exact[:8]
+        conflict_names = ", ".join(f"{x['name']} {x['direction']}" for x in exact[:6])
+        reasons.append(f"Conflict Gate blocked the entry because opposite exact setups are present: {conflict_names}.")
+        reasons.append("Wait for a fresh closed candle and re-scan; V11 never chooses UP/DOWN by priority when exact setups disagree.")
+    elif best:
         direction = str(best["direction"])
         next_color = str(best["next_candle"])
         bias = "UP SIGNAL" if direction == "UP" else "DOWN SIGNAL"
@@ -1224,6 +1329,15 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
         confidence = match_score
         selected_dir = direction
         signals_out = exact[:8]
+        if not captured_at_close:
+            # Pattern can be inspected, but a static/mid-candle frame cannot prove
+            # that the setup completed exactly at the boundary. Do not arm an entry.
+            bias = "NO TRADE"
+            next_color = "NONE"
+            confidence = 0.0
+            selected_dir = "NONE"
+            selected = f"WAIT CLOSE: {best['name']}"
+            reasons.append("Closed Candle Lock: exact setup geometry was seen, but timing was not captured at candle close. Use ONE-TAP CAMERA AUTO SCAN for the next boundary.")
     else:
         bias = "NO TRADE"
         next_color = "NONE"
@@ -1241,7 +1355,23 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
         confidence = match_score
         signals_out = near[:8]
 
-    latest_dir = "GREEN" if candles[-1]["dir"] > 0 else "RED"
+    latest_dir = "GREEN" if candles and candles[-1]["dir"] > 0 else "RED" if candles else "UNKNOWN"
+
+    # Strategy Proof: normalized candle geometry for the newest closed candles.
+    candle_debug: list[dict[str, Any]] = []
+    debug_seq = candles[-10:]
+    for i, c in enumerate(debug_seq, start=max(1, count - len(debug_seq) + 1)):
+        rng = max(1.0, float(c.get("range") or 1.0))
+        body_pct = round(float(c.get("body_height") or 0.0) / rng * 100.0, 1)
+        upper_pct = round(float(c.get("upper_wick") or 0.0) / rng * 100.0, 1)
+        lower_pct = round(float(c.get("lower_wick") or 0.0) / rng * 100.0, 1)
+        body_class = "SMALL" if is_small(c) else "LONG" if is_long(c) else "NORMAL" if is_normal(c) else "OTHER"
+        candle_debug.append({
+            "n": i, "color": "GREEN" if c["dir"] > 0 else "RED",
+            "body_pct": body_pct, "upper_wick_pct": upper_pct, "lower_wick_pct": lower_pct,
+            "body_class": body_class,
+        })
+
     if quality < 65:
         warnings.append("Image is usable, but a sharper screenshot/photo will improve wick/body and SNR-level measurement.")
     warnings.append("Setup Match measures coded rule agreement only; it is not a guaranteed win probability.")
@@ -1251,7 +1381,8 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
         "confidence": round(float(confidence), 1),
         "setup_match": round(float(match_score), 1),
         "image_quality_score": quality,
-        "detected_candles": count,
+        "detected_candles": detected_count,
+        "closed_candles_analyzed": count,
         "visual_trend": context_label,
         "momentum": "PATTERN TYPE 1-25 ONLY",
         "volatility": "NOT USED",
@@ -1263,10 +1394,16 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
         "pattern_signals": signals_out,
         "pattern_library": library,
         "pattern_library_size": 25,
-        "confluence_count": 1 if best else 0,
+        "confluence_count": len(exact) if (best and not conflict_gate) else 0,
         "setup_quality": setup_quality,
+        "conflict_gate": bool(conflict_gate),
+        "timing_verified": bool(captured_at_close),
+        "forming_candle_excluded": bool(forming_candle_excluded),
+        "newborn_candle_excluded": bool(newborn_candle_excluded),
+        "observed_latest_candle_direction": observed_latest_direction,
+        "candle_debug": candle_debug,
         "next_candle_color": next_color,
-        "entry_instruction": "NEXT CANDLE OPEN" if best else "WAIT FOR EXACT SETUP",
+        "entry_instruction": "NEXT CANDLE OPEN" if (best and captured_at_close and not conflict_gate) else "WAIT FOR VERIFIED CANDLE CLOSE" if best else "WAIT FOR EXACT SETUP",
         "recovery_trade": bool(best and best.get("recovery_trade")),
         "recovery_candidate": bool(any(int(x.get("pattern_type") or 0) == 6 for x in near)),
         "latest_candle_direction": latest_dir,
@@ -1275,12 +1412,14 @@ def analyze_chart_image(raw: bytes, timeframe: str = "1m", market: str = "", las
         "warnings": warnings[:7],
         "pattern_status": {
             "Mode": "Pattern Type 1-25 only",
-            "Indicators": "OFF - RSI/EMA/MACD/Stochastic/Bollinger are not used",
+            "Indicators": "OFF - signal engine uses only the supplied Pattern Type 1-25 rules",
             "Context": f"Visual candle context: {context_label}",
-            "Candle geometry": f"{count} candle-like structures with body/wick estimates",
+            "Candle geometry": f"{count} closed candles analysed / {detected_count} visible structures",
+            "Closed Candle Lock": "VERIFIED AT CLOSE" if captured_at_close else "FORMING CANDLE EXCLUDED - ENTRY NOT ARMED",
+            "Conflict Gate": "BLOCK" if conflict_gate else "PASS",
             "Timeframe rules": "Type 11=30s; Type 12/13=2m; Type 1=OTC; Type 24=Live market",
         },
-        "engine": "RAJA V10 · SK 25 Setup Engine + V9.4 AI Lens + Legacy Safe + Scan Gate",
+        "engine": "RAJA V11 · Strict SK25 + Adaptive Vision + Closed Candle Lock + Conflict Gate",
         "analysis_crop_mode": crop_name,
     }
     result.update(legacy_aliases(selected, selected_dir, round(float(match_score), 1), signals_out, 25))
@@ -1365,7 +1504,7 @@ def health():
     return jsonify({
         "status": "ok",
         "app": "RAJA AI Chart Scanner",
-        "version": "5.0.0",
+        "version": "11.0.0",
         "storage": "postgres" if DATABASE_URL and psycopg is not None else "file",
         "monthly_price_eur": MONTHLY_PRICE_EUR,
     })
@@ -1523,10 +1662,10 @@ def _analysis_candidate_score(result: dict[str, Any]) -> float:
     return candles * 12.0 + quality * 0.6 + strategy * 0.25 + readable
 
 
-def analyze_chart_image_mobile_safe(raw: bytes, timeframe: str = "1m", market: str = "", last_outcome: str = "") -> dict[str, Any]:
+def analyze_chart_image_mobile_safe(raw: bytes, timeframe: str = "1m", market: str = "", last_outcome: str = "", *, captured_at_close: bool = False) -> dict[str, Any]:
     """Analyze the frame, rescue sideways mobile photos, then apply a strict signal-quality gate."""
     candidates: list[tuple[int, dict[str, Any]]] = []
-    base = analyze_chart_image(raw, timeframe=timeframe, market=market, last_outcome=last_outcome)
+    base = analyze_chart_image(raw, timeframe=timeframe, market=market, last_outcome=last_outcome, captured_at_close=captured_at_close)
     candidates.append((0, base))
 
     base_candles = int(base.get("detected_candles") or 0)
@@ -1535,13 +1674,13 @@ def analyze_chart_image_mobile_safe(raw: bytes, timeframe: str = "1m", market: s
     if base_candles < max(MIN_SIGNAL_CANDLES + 4, 18) or base_trend == "UNREADABLE":
         for angle in (90, 270):
             try:
-                candidates.append((angle, analyze_chart_image(_rotate_image_bytes(raw, angle), timeframe=timeframe, market=market, last_outcome=last_outcome)))
+                candidates.append((angle, analyze_chart_image(_rotate_image_bytes(raw, angle), timeframe=timeframe, market=market, last_outcome=last_outcome, captured_at_close=captured_at_close)))
             except Exception:
                 pass
         # 180° is less common, so try it only for a very poor original read.
         if base_candles < 8:
             try:
-                candidates.append((180, analyze_chart_image(_rotate_image_bytes(raw, 180), timeframe=timeframe, market=market, last_outcome=last_outcome)))
+                candidates.append((180, analyze_chart_image(_rotate_image_bytes(raw, 180), timeframe=timeframe, market=market, last_outcome=last_outcome, captured_at_close=captured_at_close)))
             except Exception:
                 pass
 
@@ -1610,6 +1749,11 @@ def analyze():
     pair = str(request.form.get("pair") or "").strip()[:100]
     timeframe = str(request.form.get("timeframe") or "1m")[:20].lower()
     last_outcome = str(request.form.get("last_outcome") or "").strip().upper()[:16]
+    captured_at_close = str(request.form.get("captured_at_close") or "").strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        capture_boundary_ms = int(float(request.form.get("capture_boundary_ms") or 0))
+    except Exception:
+        capture_boundary_ms = 0
     broker_key = "PocketOption" if broker == "Pocket Option" else "Quotex" if broker == "Quotex" else ""
     allowed_markets = BROKER_DATA.get(broker_key, {}) if broker_key else {}
     if not broker_key or market not in allowed_markets:
@@ -1619,10 +1763,11 @@ def analyze():
     if timeframe not in {"30s", "1m", "2m", "5m", "10m", "15m", "30m"}:
         return jsonify({"status": "error", "message": "Unsupported timeframe."}), 400
     try:
-        result = analyze_chart_image_mobile_safe(raw, timeframe=timeframe, market=market, last_outcome=last_outcome)
+        result = analyze_chart_image_mobile_safe(raw, timeframe=timeframe, market=market, last_outcome=last_outcome, captured_at_close=captured_at_close)
     except ValueError as exc:
         return jsonify({"status": "error", "message": str(exc)}), 400
-    result.update({"broker": broker, "market": market, "pair": pair, "timeframe": timeframe, "created_at": _now()})
+    result.update({"broker": broker, "market": market, "pair": pair, "timeframe": timeframe, "created_at": _now(),
+                   "captured_at_close": captured_at_close, "capture_boundary_ms": capture_boundary_ms})
     user = _norm_user(rec.get("user_id"))
     add_scan(user, broker, pair, timeframe, result)
     return jsonify({"status": "success", "result": result})
