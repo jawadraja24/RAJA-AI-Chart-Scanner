@@ -1,40 +1,141 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RoadPulse AI</title>
-<link rel="stylesheet" href="/assets/styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>RoadPulse AI</title>
+
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIINfQ3yn4RjiMZ7vR5xjEDB7nKriUqSmB0=" crossorigin="">
+  <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
 <main class="shell">
-  <section id="userView" class="center-card">
-    <div class="brand"><div class="logo">〽</div><div><h1>Road<span>Pulse AI</span></h1><p>Drive safer. Arrive smarter.</p></div></div>
-    <h2>User Login</h2>
-    <p class="muted">Sign in to sync your reports, routes and preferences.</p>
-    <form class="stack" onsubmit="event.preventDefault(); demoUserLogin();">
-      <label>Email<input id="userEmail" type="email" placeholder="you@example.com" required></label>
-      <label>Password<input type="password" placeholder="••••••••" required></label>
+
+  <!-- NORMAL USER AUTH -->
+  <section id="userAuthView" class="center-card auth-card">
+    <div class="brand">
+      <div class="logo">〽</div>
+      <div>
+        <h1>Road<span>Pulse AI</span></h1>
+        <p>Drive safer. Arrive smarter.</p>
+      </div>
+    </div>
+
+    <div class="auth-tabs">
+      <button id="loginTabBtn" class="auth-tab active" onclick="showAuthTab('login')">Log in</button>
+      <button id="registerTabBtn" class="auth-tab" onclick="showAuthTab('register')">Create account</button>
+    </div>
+
+    <form id="loginForm" class="stack" onsubmit="event.preventDefault(); userLogin();">
+      <label>Email
+        <input id="loginEmail" type="email" placeholder="you@example.com" required>
+      </label>
+      <label>Password
+        <input id="loginPassword" type="password" placeholder="••••••••" required>
+      </label>
       <button type="submit">Log in</button>
     </form>
-    <div id="userMsg" class="notice hidden"></div>
+
+    <form id="registerForm" class="stack hidden" onsubmit="event.preventDefault(); userRegister();">
+      <label>Name
+        <input id="registerName" placeholder="Your name" required>
+      </label>
+      <label>Email
+        <input id="registerEmail" type="email" placeholder="you@example.com" required>
+      </label>
+      <label>Password
+        <input id="registerPassword" type="password" minlength="6" placeholder="Minimum 6 characters" required>
+      </label>
+      <button type="submit">Create account</button>
+    </form>
+
+    <div id="userAuthMsg" class="notice hidden"></div>
   </section>
 
+  <!-- USER APP -->
+  <section id="userAppView" class="user-app hidden">
+    <header class="app-topbar">
+      <div class="brand compact">
+        <div class="logo">〽</div>
+        <div>
+          <strong>Road<span>Pulse AI</span></strong>
+          <small id="userGreeting">Live map</small>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button class="icon-btn" title="Center on me" onclick="centerOnUser()">◎</button>
+        <button class="outline-btn" onclick="userLogout()">Log out</button>
+      </div>
+    </header>
+
+    <div class="map-shell">
+      <div id="map"></div>
+
+      <div class="map-status">
+        <span id="gpsBadge" class="pill warning">GPS waiting…</span>
+        <span id="incidentBadge" class="pill">0 verified reports</span>
+      </div>
+
+      <button class="report-fab" onclick="openReportSheet()" aria-label="Report incident">+</button>
+
+      <section id="reportSheet" class="report-sheet hidden">
+        <div class="sheet-handle"></div>
+        <div class="sheet-head">
+          <div>
+            <h2>Quick Report</h2>
+            <p>Uses your current GPS location.</p>
+          </div>
+          <button class="close-btn" onclick="closeReportSheet()">×</button>
+        </div>
+
+        <div class="report-grid">
+          <button onclick="submitReport('camera')"><span>📷</span>Camera</button>
+          <button onclick="submitReport('police')"><span>🚓</span>Police</button>
+          <button onclick="submitReport('accident')"><span>🚗</span>Accident</button>
+          <button onclick="submitReport('hazard')"><span>⚠️</span>Hazard</button>
+          <button onclick="submitReport('roadwork')"><span>🚧</span>Roadwork</button>
+          <button onclick="submitReport('traffic')"><span>🚦</span>Traffic</button>
+        </div>
+
+        <div id="reportMsg" class="notice hidden"></div>
+      </section>
+    </div>
+
+    <nav class="bottom-nav">
+      <button class="active">⌂<span>Map</span></button>
+      <button onclick="centerOnUser()">◎<span>My GPS</span></button>
+      <button onclick="openReportSheet()">＋<span>Report</span></button>
+      <button onclick="refreshMapData()">↻<span>Refresh</span></button>
+    </nav>
+  </section>
+
+  <!-- HIDDEN ADMIN LOGIN -->
   <section id="adminLoginView" class="center-card hidden">
-    <div class="brand"><div class="logo">〽</div><div><h1>Road<span>Pulse AI</span></h1><p>Private owner access</p></div></div>
+    <div class="brand">
+      <div class="logo">〽</div>
+      <div><h1>Road<span>Pulse AI</span></h1><p>Private owner access</p></div>
+    </div>
     <h2>Admin Access</h2>
     <p class="muted">No admin link is shown in the normal user interface.</p>
     <form class="stack" onsubmit="event.preventDefault(); adminLogin();">
-      <label>Admin password / PIN<input id="adminPassword" type="password" required></label>
+      <label>Admin password / PIN
+        <input id="adminPassword" type="password" required>
+      </label>
       <button type="submit">Open Admin</button>
     </form>
     <div id="adminLoginMsg" class="notice hidden"></div>
   </section>
 
+  <!-- ADMIN -->
   <section id="adminView" class="admin hidden">
     <aside>
-      <div class="brand small"><div class="logo">〽</div><div><strong>RoadPulse AI</strong><small>Super Admin</small></div></div>
-      <nav>
+      <div class="brand small">
+        <div class="logo">〽</div>
+        <div><strong>RoadPulse AI</strong><small>Super Admin</small></div>
+      </div>
+      <nav class="admin-nav">
         <button class="nav active" data-tab="dashboard">Dashboard</button>
         <button class="nav" data-tab="reports">Live Reports</button>
         <button class="nav" data-tab="cameras">Camera Database</button>
@@ -43,40 +144,69 @@
       </nav>
       <button class="danger ghost" onclick="adminLogout()">Log out</button>
     </aside>
+
     <section class="workspace">
-      <header><div><h2 id="pageTitle">Dashboard</h2><p class="muted">Owner controls</p></div><span class="badge">SUPER ADMIN</span></header>
+      <header>
+        <div>
+          <h2 id="pageTitle">Dashboard</h2>
+          <p class="muted">Owner controls</p>
+        </div>
+        <span class="badge">SUPER ADMIN</span>
+      </header>
 
       <div id="dashboardTab" class="tab">
         <div class="stats">
           <article><span>Live incidents</span><strong id="statIncidents">–</strong></article>
           <article><span>Pending reports</span><strong id="statPending">–</strong></article>
           <article><span>Active cameras</span><strong id="statCameras">–</strong></article>
-          <article><span>Active staff/users</span><strong id="statUsers">–</strong></article>
+          <article><span>App users</span><strong id="statUsers">–</strong></article>
         </div>
         <div class="panel"><h3>System Controls</h3><div id="quickSettings"></div></div>
       </div>
 
-      <div id="reportsTab" class="tab hidden"><div class="panel"><h3>Moderation Queue</h3><div id="reportsTable"></div></div></div>
+      <div id="reportsTab" class="tab hidden">
+        <div class="panel"><h3>Moderation Queue</h3><div id="reportsTable"></div></div>
+      </div>
 
       <div id="camerasTab" class="tab hidden">
         <div class="panel">
           <h3>Camera Database</h3>
-          <form class="inline-form" onsubmit="event.preventDefault(); addCamera();">
+          <form class="camera-form" onsubmit="event.preventDefault(); addCamera();">
             <input id="cameraType" placeholder="fixed / mobile" value="fixed" required>
             <input id="cameraLocation" placeholder="Location" required>
             <input id="cameraSpeed" type="number" placeholder="Speed limit">
             <input id="cameraConfidence" type="number" min="0" max="100" value="90" placeholder="Confidence">
+            <input id="cameraLat" type="number" step="any" placeholder="Latitude">
+            <input id="cameraLng" type="number" step="any" placeholder="Longitude">
             <button>Add camera</button>
           </form>
           <div id="cameraTable"></div>
         </div>
       </div>
 
-      <div id="usersTab" class="tab hidden"><div class="panel"><h3>Users & Roles</h3><div id="usersTable"></div></div></div>
-      <div id="settingsTab" class="tab hidden"><div class="panel"><h3>All App Settings</h3><p class="muted">Starter controls; add more as the product grows.</p><div id="allSettings"></div></div></div>
+      <div id="usersTab" class="tab hidden">
+        <div class="panel">
+          <h3>Registered App Users</h3>
+          <div id="appUsersTable"></div>
+          <h3 class="section-gap">Staff Roles</h3>
+          <div id="usersTable"></div>
+        </div>
+      </div>
+
+      <div id="settingsTab" class="tab hidden">
+        <div class="panel">
+          <h3>All App Settings</h3>
+          <p class="muted">Owner controls. Camera behavior should follow applicable country rules.</p>
+          <div id="allSettings"></div>
+        </div>
+      </div>
     </section>
   </section>
 </main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
 <script src="/assets/app.js"></script>
 </body>
 </html>
