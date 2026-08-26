@@ -6,7 +6,8 @@
   <title>RoadPulse AI</title>
 
   <link rel="preconnect" href="https://unpkg.com">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIINfQ3yn4RjiMZ7vR5xjEDB7nKriUqSmB0=" crossorigin="">
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
@@ -75,6 +76,15 @@
       <div class="map-status">
         <span id="gpsBadge" class="pill warning">GPS waiting…</span>
         <span id="incidentBadge" class="pill">0 verified reports</span>
+        <button id="trafficBadge" class="pill traffic-pill" onclick="toggleTrafficLayer()">Traffic checking…</button>
+      </div>
+
+      <div id="trafficLegend" class="traffic-legend hidden">
+        <strong>Live Traffic</strong>
+        <span><i class="traffic-dot traffic-good"></i> Free flow</span>
+        <span><i class="traffic-dot traffic-medium"></i> Slower</span>
+        <span><i class="traffic-dot traffic-heavy"></i> Heavy</span>
+        <span><i class="traffic-dot traffic-closed"></i> Closed / severe</span>
       </div>
 
       <button class="report-fab" onclick="openReportSheet()" aria-label="Report incident">+</button>
@@ -106,7 +116,7 @@
       <button class="active">⌂<span>Map</span></button>
       <button onclick="centerOnUser()">◎<span>My GPS</span></button>
       <button onclick="openReportSheet()">＋<span>Report</span></button>
-      <button onclick="refreshMapData()">↻<span>Refresh</span></button>
+      <button onclick="refreshAllLiveData()">↻<span>Refresh</span></button>
     </nav>
   </section>
 
@@ -203,7 +213,9 @@
   </section>
 </main>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""></script>
 <script src="/assets/app.js"></script>
 </body>
 </html>
