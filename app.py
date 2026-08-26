@@ -17,8 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
-ROOT_DIR = BASE_DIR.parent
-WEB_DIR = ROOT_DIR / "web"
+ROOT_DIR = BASE_DIR
+WEB_DIR = BASE_DIR
 DATA_DIR = Path(os.getenv("ROADPULSE_DATA_DIR", str(BASE_DIR / "data")))
 DB_FILE = DATA_DIR / "roadpulse.db"
 ADMIN_FILE = DATA_DIR / "admin.json"
