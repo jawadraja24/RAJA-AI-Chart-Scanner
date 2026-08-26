@@ -118,3 +118,57 @@ th{color:var(--muted)}
   .report-sheet{bottom:8px}
   .stats{grid-template-columns:1fr 1fr}
 }
+
+
+.traffic-pill{
+  border:1px solid var(--line);
+  color:var(--text);
+  padding:8px 11px;
+}
+.traffic-pill.on{
+  background:#e9f8ef;
+  color:#087b46;
+  border-color:#bde7ce;
+}
+.traffic-pill.off{
+  background:#f3f5f4;
+  color:#67736f;
+}
+.traffic-pill.error{
+  background:#fff2df;
+  color:#8a5b00;
+  border-color:#efd7ac;
+}
+.traffic-legend{
+  position:absolute;
+  z-index:450;
+  left:14px;
+  bottom:18px;
+  background:rgba(255,255,255,.96);
+  border:1px solid var(--line);
+  border-radius:15px;
+  padding:10px 12px;
+  box-shadow:0 7px 22px rgba(16,35,31,.12);
+  display:grid;
+  grid-template-columns:auto auto auto auto auto;
+  gap:10px;
+  align-items:center;
+  font-size:11px;
+}
+.traffic-legend strong{font-size:12px}
+.traffic-legend span{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.traffic-dot{display:inline-block;width:18px;height:5px;border-radius:999px}
+.traffic-good{background:#2ae57b}
+.traffic-medium{background:#ffc105}
+.traffic-heavy{background:#fb2d09}
+.traffic-closed{background:#ad0000}
+@media(max-width:640px){
+  .traffic-legend{
+    grid-template-columns:repeat(2,auto);
+    left:8px;
+    bottom:12px;
+    max-width:calc(100% - 90px);
+    gap:6px 10px;
+  }
+  .traffic-legend strong{grid-column:1 / -1}
+}
