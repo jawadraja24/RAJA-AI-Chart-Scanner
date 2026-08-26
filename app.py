@@ -8,6 +8,9 @@ import os
 import secrets
 import sqlite3
 import time
+import threading
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +37,19 @@ def get_server_secret() -> bytes:
         SECRET_FILE.write_text(secrets.token_hex(32), encoding="utf-8")
     return SECRET_FILE.read_text(encoding="utf-8").strip().encode()
 
+
 SERVER_SECRET = get_server_secret()
+
+TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY", "").strip()
+TRAFFIC_CACHE_TTL = 50
+TRAFFIC_CACHE_MAX = 600
+TRAFFIC_TILE_CACHE: dict[tuple[str, int, int, int], tuple[float, bytes]] = {}
+TRAFFIC_CACHE_LOCK = threading.Lock()
+
+# Transparent 1x1 PNG returned when traffic is disabled/unavailable.
+TRANSPARENT_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 def db():
     con = sqlite3.connect(DB_FILE)
@@ -416,6 +431,7 @@ def map_data(request: Request):
             "traffic_layer": get_setting("traffic_layer", True),
             "hazard_layer": get_setting("hazard_layer", True),
             "camera_warning_mode": get_setting("camera_warning_mode", "country_compliance"),
+            "traffic_available": bool(TOMTOM_API_KEY),
         },
     }
 
@@ -457,6 +473,122 @@ def create_report(payload: ReportPayload, request: Request):
     report_id = cur.lastrowid
     con.close()
     return {"ok": True, "id": report_id, "status": "pending"}
+
+
+# --------------------------
+# Real-time traffic tiles
+# --------------------------
+
+def _validate_tile(z: int, x: int, y: int) -> None:
+    if not (0 <= z <= 22):
+        raise HTTPException(400, "Invalid zoom")
+    max_index = (1 << z) - 1
+    if not (0 <= x <= max_index and 0 <= y <= max_index):
+        raise HTTPException(400, "Invalid tile coordinates")
+
+def _traffic_upstream_url(kind: str, z: int, x: int, y: int) -> str:
+    if kind == "flow":
+        return (
+            f"https://api.tomtom.com/maps/orbis/traffic/flow/raster/tile/"
+            f"{z}/{x}/{y}?apiVersion=2&style=light&tileSize=256"
+        )
+    if kind == "incidents":
+        return (
+            f"https://api.tomtom.com/maps/orbis/traffic/incidents/raster/tile/"
+            f"{z}/{x}/{y}?apiVersion=2&style=light&tileSize=256"
+        )
+    raise HTTPException(400, "Unknown traffic layer")
+
+def _get_cached_traffic_tile(kind: str, z: int, x: int, y: int) -> bytes | None:
+    cache_key = (kind, z, x, y)
+    now = time.time()
+    with TRAFFIC_CACHE_LOCK:
+        item = TRAFFIC_TILE_CACHE.get(cache_key)
+        if item and item[0] > now:
+            return item[1]
+        if item:
+            TRAFFIC_TILE_CACHE.pop(cache_key, None)
+    return None
+
+def _put_cached_traffic_tile(kind: str, z: int, x: int, y: int, data: bytes) -> None:
+    cache_key = (kind, z, x, y)
+    with TRAFFIC_CACHE_LOCK:
+        if len(TRAFFIC_TILE_CACHE) >= TRAFFIC_CACHE_MAX:
+            # Remove the oldest-expiring entries first.
+            oldest = sorted(
+                TRAFFIC_TILE_CACHE.items(),
+                key=lambda item: item[1][0]
+            )[: max(1, TRAFFIC_CACHE_MAX // 10)]
+            for key, _value in oldest:
+                TRAFFIC_TILE_CACHE.pop(key, None)
+        TRAFFIC_TILE_CACHE[cache_key] = (time.time() + TRAFFIC_CACHE_TTL, data)
+
+def _fetch_traffic_tile(kind: str, z: int, x: int, y: int) -> bytes:
+    cached = _get_cached_traffic_tile(kind, z, x, y)
+    if cached is not None:
+        return cached
+
+    url = _traffic_upstream_url(kind, z, x, y)
+    req = urllib.request.Request(
+        url,
+        headers={
+            "TomTom-Api-Key": TOMTOM_API_KEY,
+            "TomTom-Api-Version": "2",
+            "Accept": "image/png",
+            "User-Agent": "RoadPulseAI/1.0",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as upstream:
+            data = upstream.read()
+            content_type = upstream.headers.get("Content-Type", "")
+            if upstream.status != 200 or "image/png" not in content_type:
+                return TRANSPARENT_PNG
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+        return TRANSPARENT_PNG
+
+    _put_cached_traffic_tile(kind, z, x, y, data)
+    return data
+
+def _traffic_tile_response(kind: str, z: int, x: int, y: int, request: Request) -> Response:
+    require_user(request)
+    _validate_tile(z, x, y)
+
+    if not get_setting("traffic_layer", True) or not TOMTOM_API_KEY:
+        return Response(
+            content=TRANSPARENT_PNG,
+            media_type="image/png",
+            headers={"Cache-Control": "private, max-age=30"},
+        )
+
+    data = _fetch_traffic_tile(kind, z, x, y)
+    return Response(
+        content=data,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "private, max-age=45",
+            "X-RoadPulse-Traffic": "tomtom-orbis-v2",
+        },
+    )
+
+@app.get("/api/traffic/flow/{z}/{x}/{y}")
+def traffic_flow_tile(z: int, x: int, y: int, request: Request):
+    return _traffic_tile_response("flow", z, x, y, request)
+
+@app.get("/api/traffic/incidents/{z}/{x}/{y}")
+def traffic_incident_tile(z: int, x: int, y: int, request: Request):
+    return _traffic_tile_response("incidents", z, x, y, request)
+
+@app.get("/api/traffic/status")
+def traffic_status(request: Request):
+    require_user(request)
+    return {
+        "configured": bool(TOMTOM_API_KEY),
+        "enabled": bool(get_setting("traffic_layer", True)),
+        "provider": "TomTom Orbis Traffic v2" if TOMTOM_API_KEY else None,
+        "refresh_seconds": 60,
+    }
 
 # --------------------------
 # Hidden Admin
