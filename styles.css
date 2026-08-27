@@ -734,3 +734,94 @@ body.walking-navigation .speed-pill{
     grid-template-columns:repeat(3,1fr) !important;
   }
 }
+
+
+/* Web V1.3: high-contrast Drive / Walk / Bike routes + explicit GO action */
+.destination-action-btn{
+  min-width:76px;height:36px;padding:0 14px;border-radius:999px;
+  background:#0f7c4b;color:#fff;font-size:12px;font-weight:900;letter-spacing:.2px;
+  box-shadow:0 5px 14px rgba(15,124,75,.22)
+}
+.destination-action-btn.ready{
+  min-width:84px;background:#1267e8;box-shadow:0 6px 17px rgba(18,103,232,.30);font-size:13px
+}
+.destination-action-btn.ready:hover{filter:brightness(1.04)}
+.nav-mode-switch{max-width:calc(100vw - 32px)}
+.nav-mode-btn{min-width:96px}
+#navModeWalkBtn.active{background:#076cff;color:#fff;box-shadow:0 5px 14px rgba(7,108,255,.28)}
+#navModeCarBtn.active{background:#6d28d9;color:#fff;box-shadow:0 5px 14px rgba(109,40,217,.28)}
+#navModeBikeBtn.active{background:#008fb3;color:#fff;box-shadow:0 5px 14px rgba(0,143,179,.28)}
+.route-summary-card.nontraffic-mode{grid-template-columns:repeat(3,1fr)!important}
+.route-summary-card.nontraffic-mode #routeTrafficDelayItem{display:none}
+body.walking-navigation .nav-maneuver-icon{background:#076cff}
+body.cycling-navigation .nav-maneuver-icon{background:#008fb3}
+body.car-navigation .nav-maneuver-icon{background:#6d28d9}
+body.walking-navigation .speed-pill{opacity:.72}
+@media(max-width:700px){
+  .destination-action-btn{min-width:66px;padding:0 11px;font-size:11px}
+  .destination-action-btn.ready{min-width:72px}
+  .nav-mode-switch{width:100%;justify-content:center;gap:4px}
+  .nav-mode-btn{min-width:0;flex:1;padding:7px 8px;font-size:10.5px}
+}
+
+
+/* Web V1.4: installable PWA */
+.install-app-btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  white-space:nowrap;
+  border-color:#b8d9ca;
+  color:#087b46;
+  font-weight:900;
+}
+.install-app-btn:hover{
+  background:#edf9f3;
+}
+.install-app-btn.installed{
+  background:#e7f6ee;
+  color:#087b46;
+  opacity:.82;
+}
+.pwa-install-toast{
+  position:absolute;
+  z-index:900;
+  top:14px;
+  left:50%;
+  transform:translateX(-50%);
+  max-width:min(92vw,560px);
+  padding:11px 15px;
+  border-radius:13px;
+  background:rgba(8,45,36,.96);
+  color:#fff;
+  font-size:13px;
+  font-weight:800;
+  line-height:1.35;
+  box-shadow:0 10px 30px rgba(0,0,0,.22);
+}
+@media(max-width:700px){
+  .install-app-btn{
+    width:40px;
+    height:40px;
+    min-width:40px;
+    padding:0;
+    border-radius:12px;
+    font-size:16px;
+  }
+  .install-app-btn .install-label{
+    display:none;
+  }
+  .pwa-install-toast{
+    top:8px;
+    font-size:12px;
+  }
+}
+
+
+.install-app-btn:disabled{
+  cursor:not-allowed;
+  opacity:.65;
+  background:#f4f7f5;
+  color:#587066;
+}
