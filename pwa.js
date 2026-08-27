@@ -11,6 +11,10 @@ function roadPulseIsIOS(){
   return /iphone|ipad|ipod/i.test(navigator.userAgent);
 }
 
+function roadPulseIsAndroid(){
+  return /android/i.test(navigator.userAgent);
+}
+
 function showPwaInstallToast(message){
   const toast = document.getElementById("pwaInstallToast");
   if (!toast) return;
@@ -24,7 +28,52 @@ function showPwaInstallToast(message){
   }, 4500);
 }
 
-function setInstallButtonState(){
+function openRoadPulseInstallHelp(kind){
+  const sheet = document.getElementById("installHelpSheet");
+  const title = document.getElementById("installHelpTitle");
+  const body = document.getElementById("installHelpBody");
+  if (!sheet || !title || !body) return;
+
+  if (kind === "ios"){
+    title.textContent = "Install RoadPulse on iPhone / iPad";
+    body.innerHTML = `
+      <p>Apple does not allow websites to install silently. Safari can add RoadPulse as a full-screen Home Screen app.</p>
+      <ol>
+        <li>Tap the <strong>Share</strong> button in Safari.</li>
+        <li>Choose <strong>Add to Home Screen</strong>.</li>
+        <li>Tap <strong>Add</strong>.</li>
+      </ol>
+    `;
+  }else if (kind === "android"){
+    title.textContent = "Install RoadPulse on Android";
+    body.innerHTML = `
+      <p>Your browser has not exposed the direct install prompt yet.</p>
+      <ol>
+        <li>Open the browser menu <strong>⋮</strong>.</li>
+        <li>Choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li>
+        <li>Confirm <strong>Install</strong>.</li>
+      </ol>
+    `;
+  }else{
+    title.textContent = "Install RoadPulse AI";
+    body.innerHTML = `
+      <p>Use your browser's app installation option.</p>
+      <ol>
+        <li>Open the browser menu.</li>
+        <li>Choose <strong>Install RoadPulse AI</strong> / <strong>Install app</strong>.</li>
+        <li>Confirm the installation.</li>
+      </ol>
+    `;
+  }
+
+  sheet.classList.remove("hidden");
+}
+
+function closeRoadPulseInstallHelp(){
+  document.getElementById("installHelpSheet")?.classList.add("hidden");
+}
+
+function updateInstallButton(){
   const btn = document.getElementById("installAppBtn");
   if (!btn) return;
 
@@ -36,93 +85,83 @@ function setInstallButtonState(){
     return;
   }
 
+  btn.disabled = false;
   btn.classList.remove("installed");
+  btn.innerHTML = '⬇ <span class="install-label">Install</span>';
 
-  // iOS does not expose beforeinstallprompt.
   if (roadPulseIsIOS()){
-    btn.disabled = false;
-    btn.innerHTML = '⬇ <span class="install-label">Install</span>';
-    btn.title = "Add RoadPulse AI to Home Screen";
-    return;
-  }
-
-  // Chrome/Edge/Android: only enable when the browser has declared the PWA installable.
-  if (roadPulseInstallPrompt){
-    btn.disabled = false;
-    btn.innerHTML = '⬇ <span class="install-label">Install</span>';
+    btn.title = "Install RoadPulse on iPhone / iPad";
+  }else if (roadPulseInstallPrompt){
     btn.title = "Install RoadPulse AI";
   }else{
-    btn.disabled = true;
-    btn.innerHTML = '… <span class="install-label">Preparing</span>';
-    btn.title = "Preparing install";
+    btn.title = "Install RoadPulse AI";
   }
 }
 
 async function installRoadPulseApp(){
   if (roadPulseIsInstalled()){
-    setInstallButtonState();
+    updateInstallButton();
     return;
   }
 
-  if (roadPulseIsIOS()){
-    showPwaInstallToast("iPhone/iPad: tap Share, then Add to Home Screen.");
-    return;
-  }
+  // Android/Chrome/Edge/Samsung: direct official PWA prompt when available.
+  if (roadPulseInstallPrompt){
+    const promptEvent = roadPulseInstallPrompt;
+    roadPulseInstallPrompt = null;
 
-  if (!roadPulseInstallPrompt){
-    // Button should normally be disabled in this state.
-    showPwaInstallToast("Install is still preparing. Refresh once if this remains disabled.");
-    setInstallButtonState();
-    return;
-  }
+    try{
+      await promptEvent.prompt();
+      const choice = await promptEvent.userChoice;
 
-  const promptEvent = roadPulseInstallPrompt;
-  roadPulseInstallPrompt = null;
-  setInstallButtonState();
-
-  try{
-    // Must be called directly from the user's click.
-    await promptEvent.prompt();
-    const choice = await promptEvent.userChoice;
-
-    if (choice && choice.outcome === "accepted"){
-      showPwaInstallToast("RoadPulse AI installation started.");
-    }else{
-      showPwaInstallToast("Installation cancelled.");
+      if (choice?.outcome === "accepted"){
+        showPwaInstallToast("RoadPulse AI installation started.");
+      }else{
+        showPwaInstallToast("Installation cancelled.");
+      }
+    }catch(err){
+      console.error("RoadPulse install prompt failed:", err);
+      openRoadPulseInstallHelp(roadPulseIsAndroid() ? "android" : "other");
     }
-  }catch(err){
-    console.error("RoadPulse install prompt failed:", err);
-    showPwaInstallToast("Install prompt could not open. Refresh and try again.");
+
+    updateInstallButton();
+    return;
   }
+
+  // iOS Safari does not expose beforeinstallprompt.
+  if (roadPulseIsIOS()){
+    openRoadPulseInstallHelp("ios");
+    return;
+  }
+
+  // Other browsers: reliable manual fallback instead of a dead "Preparing" button.
+  openRoadPulseInstallHelp(roadPulseIsAndroid() ? "android" : "other");
 }
 
 window.addEventListener("beforeinstallprompt", event=>{
   event.preventDefault();
   roadPulseInstallPrompt = event;
-  setInstallButtonState();
+  updateInstallButton();
 });
 
 window.addEventListener("appinstalled", ()=>{
   roadPulseInstallPrompt = null;
-  setInstallButtonState();
+  updateInstallButton();
+  closeRoadPulseInstallHelp();
   showPwaInstallToast("RoadPulse AI installed successfully.");
 });
 
 window.addEventListener("load", ()=>{
-  setInstallButtonState();
+  updateInstallButton();
 
   if ("serviceWorker" in navigator){
     navigator.serviceWorker
       .register("/service-worker.js", {scope:"/"})
-      .then(()=> {
-        // Registration succeeded. beforeinstallprompt will enable the button
-        // once the browser finishes its own installability checks.
-      })
       .catch(err=>{
         console.error("RoadPulse service worker registration failed:", err);
-        showPwaInstallToast("App install service could not start. Refresh and try again.");
+        showPwaInstallToast("Install service could not start. Refresh and try again.");
       });
   }
 });
 
 window.installRoadPulseApp = installRoadPulseApp;
+window.closeRoadPulseInstallHelp = closeRoadPulseInstallHelp;
