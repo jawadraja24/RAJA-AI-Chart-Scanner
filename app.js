@@ -3786,3 +3786,1584 @@ function calculateRemainingRouteMeters(){
 }
 
 function updateRemainingRouteSummary(){
+  if (!navigationActive || !navBaseSummary) return;
+
+  const remainingMeters = calculateRemainingRouteMeters();
+  const totalMeters = Number(navBaseSummary.lengthMeters || 0);
+  const totalSeconds = Number(navBaseSummary.travelTimeSeconds || 0);
+  const totalDelay = Number(navBaseSummary.trafficDelaySeconds || 0);
+
+  const ratio =
+    totalMeters > 0
+      ? Math.max(
+          0,
+          Math.min(
+            1,
+            remainingMeters / totalMeters
+          )
+        )
+      : 1;
+
+  const remainingSeconds =
+    Math.round(
+      totalSeconds * ratio
+    );
+
+  const remainingDelay =
+    Math.round(
+      totalDelay * ratio
+    );
+
+  byId("routeDistance").textContent =
+    formatRouteDistance(
+      remainingMeters
+    );
+
+  byId("routeDuration").textContent =
+    formatDuration(
+      remainingSeconds
+    );
+
+  byId("routeDelay").textContent =
+    remainingDelay > 30
+      ? `+${formatDuration(remainingDelay)}`
+      : "None";
+
+  const arrival =
+    new Date(
+      Date.now() +
+      remainingSeconds * 1000
+    );
+
+  byId("routeEta").textContent =
+    arrival.toLocaleTimeString(
+      [],
+      {
+        hour:"2-digit",
+        minute:"2-digit"
+      }
+    );
+}
+
+function buildProximityTargets(data){
+  const targets = [];
+
+  (data.reports || []).forEach(
+    item => {
+      if (
+        item.lat == null ||
+        item.lng == null
+      ){
+        return;
+      }
+
+      if (
+        item.type === "camera" &&
+        !cameraVoiceAlertsAllowed()
+      ){
+        return;
+      }
+
+      targets.push({
+        id:`report:${item.id}`,
+        type:item.type,
+        lat:Number(item.lat),
+        lng:Number(item.lng),
+        location:
+          item.location ||
+          "Verified community report",
+        source:"community"
+      });
+    }
+  );
+
+  if (cameraVoiceAlertsAllowed()){
+    (data.cameras || []).forEach(
+      item => {
+        if (
+          item.lat == null ||
+          item.lng == null
+        ){
+          return;
+        }
+
+        targets.push({
+          id:`camera:${item.id}`,
+          type:"camera",
+          lat:Number(item.lat),
+          lng:Number(item.lng),
+          location:
+            item.location ||
+            "Camera",
+          source:"camera"
+        });
+      }
+    );
+  }
+
+  return targets;
+}
+
+function cameraVoiceAlertsAllowed(){
+  const country =
+    String(
+      proximitySettings.defaultCountry ||
+      ""
+    )
+    .toUpperCase();
+
+  const mode =
+    proximitySettings.cameraWarningMode;
+
+  if (
+    mode === "country_compliance" &&
+    country === "DE"
+  ){
+    return false;
+  }
+
+  return true;
+}
+
+function haversineMeters(
+  lat1,
+  lng1,
+  lat2,
+  lng2
+){
+  const R = 6371000;
+
+  const rad =
+    d =>
+      d *
+      Math.PI /
+      180;
+
+  const p1 =
+    rad(lat1);
+
+  const p2 =
+    rad(lat2);
+
+  const dp =
+    rad(
+      lat2 - lat1
+    );
+
+  const dl =
+    rad(
+      lng2 - lng1
+    );
+
+  const a =
+    Math.sin(dp / 2) ** 2 +
+    Math.cos(p1) *
+    Math.cos(p2) *
+    Math.sin(dl / 2) ** 2;
+
+  return (
+    2 *
+    R *
+    Math.atan2(
+      Math.sqrt(a),
+      Math.sqrt(1-a)
+    )
+  );
+}
+
+function bearingDegrees(
+  lat1,
+  lng1,
+  lat2,
+  lng2
+){
+  const rad =
+    d =>
+      d *
+      Math.PI /
+      180;
+
+  const deg =
+    r =>
+      r *
+      180 /
+      Math.PI;
+
+  const p1 =
+    rad(lat1);
+
+  const p2 =
+    rad(lat2);
+
+  const dl =
+    rad(
+      lng2 - lng1
+    );
+
+  const y =
+    Math.sin(dl) *
+    Math.cos(p2);
+
+  const x =
+    Math.cos(p1) *
+    Math.sin(p2)
+    -
+    Math.sin(p1) *
+    Math.cos(p2) *
+    Math.cos(dl);
+
+  return (
+    deg(
+      Math.atan2(
+        y,
+        x
+      )
+    ) +
+    360
+  ) % 360;
+}
+
+function angleDifference(a,b){
+  return Math.abs(
+    (
+      (
+        a -
+        b +
+        540
+      ) %
+      360
+    ) -
+    180
+  );
+}
+
+function targetIsAhead(target){
+  const heading =
+    currentPosition?.heading;
+
+  const speed =
+    currentPosition?.speed;
+
+  if (
+    heading == null ||
+    heading < 0 ||
+    speed == null ||
+    speed < 4.2
+  ){
+    return true;
+  }
+
+  const bearing =
+    bearingDegrees(
+      currentPosition.lat,
+      currentPosition.lng,
+      target.lat,
+      target.lng
+    );
+
+  return (
+    angleDifference(
+      heading,
+      bearing
+    ) <= 90
+  );
+}
+
+function evaluateProximityAlerts(){
+  const card =
+    byId("proximityAlertCard");
+
+  const nearbyBadge =
+    byId("nearbyBadge");
+
+  if (
+    !card ||
+    !currentPosition ||
+    !proximitySettings.enabled
+  ){
+    if (card){
+      card.classList.add(
+        "hidden"
+      );
+    }
+
+    if (nearbyBadge){
+      nearbyBadge.textContent =
+        "Nearby: waiting GPS";
+    }
+
+    currentProximityTarget =
+      null;
+
+    return;
+  }
+
+  let nearest = null;
+  const now = Date.now();
+
+  for (
+    const target
+    of proximityTargets
+  ){
+    const dismissed =
+      dismissedUntil.get(
+        target.id
+      ) || 0;
+
+    if (dismissed > now){
+      continue;
+    }
+
+    const distanceM =
+      haversineMeters(
+        currentPosition.lat,
+        currentPosition.lng,
+        target.lat,
+        target.lng
+      );
+
+    if (
+      distanceM >
+      proximitySettings.maxDistanceM
+    ){
+      continue;
+    }
+
+    if (
+      !targetIsAhead(target)
+    ){
+      continue;
+    }
+
+    if (
+      !nearest ||
+      distanceM <
+      nearest.distanceM
+    ){
+      nearest = {
+        ...target,
+        distanceM
+      };
+    }
+  }
+
+  if (!nearest){
+    card.classList.add(
+      "hidden"
+    );
+
+    if (nearbyBadge){
+      nearbyBadge.textContent =
+        `Nearby: none < ${Math.round(proximitySettings.maxDistanceM)}m`;
+    }
+
+    currentProximityTarget =
+      null;
+
+    return;
+  }
+
+  if (nearbyBadge){
+    nearbyBadge.textContent =
+      `Nearby: ${nearest.type} ${formatDistance(nearest.distanceM)}`;
+
+    nearbyBadge.classList.add(
+      "good"
+    );
+  }
+
+  currentProximityTarget =
+    nearest;
+
+  renderProximityAlert(
+    nearest
+  );
+
+  maybeSpeakProximityAlert(
+    nearest
+  );
+}
+
+function renderProximityAlert(target){
+  const card =
+    byId("proximityAlertCard");
+
+  if (!card){
+    return;
+  }
+
+  const style =
+    reportStyle[target.type] ||
+    {
+      emoji:"⚠️"
+    };
+
+  byId("proximityAlertIcon")
+    .textContent =
+    style.emoji ||
+    "⚠️";
+
+  byId("proximityAlertTitle")
+    .textContent =
+    alertTitleForType(
+      target.type
+    );
+
+  byId("proximityAlertDistance")
+    .textContent =
+    formatDistance(
+      target.distanceM
+    );
+
+  byId("proximityAlertLocation")
+    .textContent =
+    target.location ||
+    "Verified nearby report";
+
+  card.classList.remove(
+    "hidden"
+  );
+
+  card.classList.toggle(
+    "urgent",
+    target.distanceM <=
+    proximitySettings.urgentDistanceM
+  );
+}
+
+function alertTitleForType(type){
+  return localizedAlertTitle(
+    type
+  );
+}
+
+function formatDistance(meters){
+  if (meters < 1000){
+    return `${
+      Math.max(
+        10,
+        Math.round(
+          meters / 10
+        ) * 10
+      )
+    } m`;
+  }
+
+  return `${
+    (
+      meters /
+      1000
+    ).toFixed(1)
+  } km`;
+}
+
+function voiceMessageForTarget(target){
+  const d =
+    Math.max(
+      50,
+      Math.round(
+        target.distanceM /
+        50
+      ) * 50
+    );
+
+  return `${localizedAlertTitle(target.type)} ${localizedInMeters(d)}.`;
+}
+
+function maybeSpeakProximityAlert(target){
+  if (
+    !voiceEnabledByUser ||
+    !proximitySettings.voice ||
+    !(
+      "speechSynthesis"
+      in window
+    )
+  ){
+    return;
+  }
+
+  const now =
+    Date.now();
+
+  const previous =
+    lastAlertedAt.get(
+      target.id
+    ) || 0;
+
+  const cooldownMs =
+    proximitySettings.cooldownS *
+    1000;
+
+  if (
+    now -
+    previous <
+    cooldownMs
+  ){
+    return;
+  }
+
+  lastAlertedAt.set(
+    target.id,
+    now
+  );
+
+  const utterance =
+    new SpeechSynthesisUtterance(
+      voiceMessageForTarget(
+        target
+      )
+    );
+
+  utterance.lang =
+    userLanguage ||
+    "en-GB";
+
+  utterance.rate =
+    1.0;
+
+  utterance.pitch =
+    1.0;
+
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(
+    utterance
+  );
+}
+
+function toggleVoiceAlerts(){
+  unlockNavigationAudio();
+
+  voiceEnabledByUser =
+    !voiceEnabledByUser;
+
+  safeLocalSet(
+    "roadpulse_voice",
+    voiceEnabledByUser
+      ? "on"
+      : "off"
+  );
+
+  if (
+    "speechSynthesis"
+    in window
+  ){
+    window.speechSynthesis.cancel();
+
+    if (
+      voiceEnabledByUser &&
+      proximitySettings.voice
+    ){
+      const u =
+        new SpeechSynthesisUtterance(
+          t("voiceEnabled")
+        );
+
+      u.lang =
+        userLanguage ||
+        "en-GB";
+
+      u.rate =
+        1.0;
+
+      window.speechSynthesis.speak(
+        u
+      );
+    }
+  }
+
+  updateVoiceBadge();
+}
+
+function updateVoiceBadge(){
+  const badge =
+    byId("voiceBadge");
+
+  if (!badge){
+    return;
+  }
+
+  const effectiveOn =
+    voiceEnabledByUser &&
+    proximitySettings.voice;
+
+  badge.textContent =
+    effectiveOn
+      ? `🔊 ${t("voiceOn")}`
+      : `🔇 ${t("voiceOff")}`;
+
+  badge.classList.toggle(
+    "off",
+    !effectiveOn
+  );
+}
+
+function dismissCurrentAlert(){
+  if (!currentProximityTarget){
+    return;
+  }
+
+  dismissedUntil.set(
+    currentProximityTarget.id,
+    Date.now() +
+    10 *
+    60 *
+    1000
+  );
+
+  byId("proximityAlertCard")
+    ?.classList
+    .add(
+      "hidden"
+    );
+
+  currentProximityTarget =
+    null;
+}
+
+function openReportSheet(){
+  const el =
+    byId("reportSheet");
+
+  el.classList.remove(
+    "hidden"
+  );
+
+  byId("reportMsg")
+    .classList
+    .add(
+      "hidden"
+    );
+}
+
+function closeReportSheet(){
+  byId("reportSheet")
+    .classList
+    .add(
+      "hidden"
+    );
+}
+
+async function submitReport(type){
+  const msg =
+    byId("reportMsg");
+
+  msg.classList.add(
+    "hidden"
+  );
+
+  if (!currentPosition){
+    msg.textContent =
+      "GPS location is not ready yet. Allow location access and try again.";
+
+    msg.classList.remove(
+      "hidden",
+      "error"
+    );
+
+    msg.classList.add(
+      "error"
+    );
+
+    startGpsWatch();
+
+    return;
+  }
+
+  const r =
+    await fetch(
+      "/api/reports",
+      {
+        method:"POST",
+        credentials:"include",
+
+        headers:{
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+            type,
+            lat:
+              currentPosition.lat,
+            lng:
+              currentPosition.lng,
+            location:
+              "User GPS report"
+          })
+      }
+    );
+
+  const data =
+    await r.json()
+      .catch(
+        () => ({})
+      );
+
+  if (!r.ok){
+    msg.textContent =
+      data.detail ||
+      "Could not submit report.";
+
+    msg.classList.remove(
+      "hidden"
+    );
+
+    msg.classList.add(
+      "error"
+    );
+
+    return;
+  }
+
+  msg.textContent =
+    `${type} report sent for admin/community verification.`;
+
+  msg.classList.remove(
+    "hidden",
+    "error"
+  );
+
+  setTimeout(
+    closeReportSheet,
+    1400
+  );
+}
+
+function esc(v){
+  return String(
+    v ?? ""
+  )
+  .replace(
+    /[&<>"']/g,
+    s => ({
+      "&":"&amp;",
+      "<":"&lt;",
+      ">":"&gt;",
+      '"':"&quot;",
+      "'":"&#039;"
+    })[s]
+  );
+}
+
+/* ---------------- Admin ---------------- */
+
+async function adminLogin(){
+  const r =
+    await fetch(
+      "/api/admin/login",
+      {
+        method:"POST",
+        credentials:"include",
+
+        headers:{
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+            password:
+              byId(
+                "adminPassword"
+              ).value
+          })
+      }
+    );
+
+  if (!r.ok){
+    const msg =
+      byId(
+        "adminLoginMsg"
+      );
+
+    msg.textContent =
+      "Admin login failed.";
+
+    msg.classList.remove(
+      "hidden"
+    );
+
+    msg.classList.add(
+      "error"
+    );
+
+    return;
+  }
+
+  byId("adminPassword")
+    .value = "";
+
+  await loadAdmin();
+}
+
+async function adminLogout(){
+  await fetch(
+    "/api/admin/logout",
+    {
+      method:"POST",
+      credentials:"include"
+    }
+  );
+
+  location.hash = "";
+
+  showOnly(
+    "userAuthView"
+  );
+
+  routeByHash();
+}
+
+async function loadAdmin(){
+  const r =
+    await fetch(
+      "/api/admin/dashboard",
+      {
+        credentials:"include"
+      }
+    );
+
+  if (!r.ok){
+    showOnly(
+      "adminLoginView"
+    );
+
+    return;
+  }
+
+  adminData =
+    await r.json();
+
+  showOnly(
+    "adminView"
+  );
+
+  renderAdmin();
+}
+
+function renderAdmin(){
+  const c =
+    adminData.counts;
+
+  byId("statIncidents")
+    .textContent =
+    c.live_incidents;
+
+  byId("statPending")
+    .textContent =
+    c.pending_reports;
+
+  byId("statCameras")
+    .textContent =
+    c.camera_count;
+
+  byId("statUsers")
+    .textContent =
+    c.active_users;
+
+  renderSettings();
+  renderReports();
+  renderCameras();
+  renderUsers();
+}
+
+const settingDescriptions = {
+  voice_alerts:
+    "Master switch for supported voice alerts.",
+
+  background_driving_mode:
+    "Native driving mode may keep location active while driving.",
+
+  community_reports:
+    "Accept community reports.",
+
+  camera_layer:
+    "Show camera data where permitted.",
+
+  traffic_layer:
+    "Show live traffic when a provider is connected.",
+
+  hazard_layer:
+    "Show hazards/roadworks.",
+
+  admin_2fa_required:
+    "Require owner second factor.",
+
+  default_country:
+    "Fallback jurisdiction.",
+
+  camera_warning_mode:
+    "Apply country-by-country camera rules.",
+
+  app_name:
+    "Public display name.",
+
+  proximity_alerts:
+    "Show nearby verified road alerts.",
+
+  alert_distance_m:
+    "Maximum proximity alert distance.",
+
+  urgent_alert_distance_m:
+    "Urgent warning distance.",
+
+  alert_repeat_cooldown_s:
+    "Repeat voice alert cooldown.",
+
+  voice_language:
+    "Fallback browser speech language."
+};
+
+function boolRow(k,v){
+  return `
+    <div class="setting-row">
+
+      <div class="meta">
+
+        <strong>
+          ${esc(
+            k.replaceAll(
+              "_",
+              " "
+            )
+          )}
+        </strong>
+
+        <small>
+          ${esc(
+            settingDescriptions[k] ||
+            ""
+          )}
+        </small>
+
+      </div>
+
+      <div
+        class="switch ${v ? "on" : ""}"
+        onclick="updateSetting('${k}',${!v})">
+      </div>
+
+    </div>
+  `;
+}
+
+function scalarRow(k,v){
+  return `
+    <div class="setting-row">
+
+      <div class="meta">
+
+        <strong>
+          ${esc(
+            k.replaceAll(
+              "_",
+              " "
+            )
+          )}
+        </strong>
+
+        <small>
+          ${esc(
+            settingDescriptions[k] ||
+            ""
+          )}
+        </small>
+
+      </div>
+
+      <input
+        style="max-width:260px"
+        value="${esc(v)}"
+        onchange="updateSetting('${k}',this.value)"
+      >
+
+    </div>
+  `;
+}
+
+function renderSettings(){
+  const s =
+    adminData.settings;
+
+  const q = [
+    "voice_alerts",
+    "background_driving_mode",
+    "community_reports",
+    "camera_layer",
+    "traffic_layer",
+    "hazard_layer",
+    "proximity_alerts"
+  ];
+
+  byId("quickSettings")
+    .innerHTML =
+    q.map(
+      k =>
+        typeof s[k] === "boolean"
+          ? boolRow(
+              k,
+              s[k]
+            )
+          : scalarRow(
+              k,
+              s[k]
+            )
+    )
+    .join("");
+
+  byId("allSettings")
+    .innerHTML =
+    Object.entries(s)
+      .map(
+        ([k,v]) =>
+          typeof v === "boolean"
+            ? boolRow(
+                k,
+                v
+              )
+            : scalarRow(
+                k,
+                v
+              )
+      )
+      .join("");
+}
+
+async function updateSetting(k,v){
+  const r =
+    await fetch(
+      `/api/admin/settings/${encodeURIComponent(k)}`,
+      {
+        method:"PUT",
+        credentials:"include",
+
+        headers:{
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+            value:v
+          })
+      }
+    );
+
+  if (r.ok){
+    adminData.settings[k] =
+      v;
+
+    renderSettings();
+  }
+}
+
+function renderReports(){
+  const rows =
+    adminData.reports
+      .map(
+        r => `
+          <tr>
+
+            <td>
+              ${esc(r.type)}
+            </td>
+
+            <td>
+              ${esc(r.location)}
+            </td>
+
+            <td>
+              ${esc(r.reported_by)}
+            </td>
+
+            <td>
+              ${
+                r.lat != null
+                  ? Number(r.lat)
+                      .toFixed(5)
+                  : "—"
+              }
+            </td>
+
+            <td>
+              ${
+                r.lng != null
+                  ? Number(r.lng)
+                      .toFixed(5)
+                  : "—"
+              }
+            </td>
+
+            <td>
+              <span class="status ${esc(r.status)}">
+                ${esc(r.status)}
+              </span>
+            </td>
+
+            <td class="row-actions">
+
+              <button
+                onclick="setReportStatus(${r.id},'verified')">
+                Verify
+              </button>
+
+              <button
+                onclick="setReportStatus(${r.id},'pending')">
+                Pending
+              </button>
+
+              <button
+                class="reject"
+                onclick="setReportStatus(${r.id},'rejected')">
+                Reject
+              </button>
+
+            </td>
+
+          </tr>
+        `
+      )
+      .join("");
+
+  byId("reportsTable")
+    .innerHTML =
+    `
+      <table>
+
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Location</th>
+            <th>Reporter</th>
+            <th>Lat</th>
+            <th>Lng</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          ${rows}
+        </tbody>
+
+      </table>
+    `;
+}
+
+async function setReportStatus(
+  id,
+  status
+){
+  const r =
+    await fetch(
+      `/api/admin/reports/${id}/status`,
+      {
+        method:"PUT",
+        credentials:"include",
+
+        headers:{
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+            status
+          })
+      }
+    );
+
+  if (r.ok){
+    await loadAdmin();
+  }
+}
+
+function renderCameras(){
+  const rows =
+    adminData.cameras
+      .map(
+        c => `
+          <tr>
+
+            <td>
+              ${esc(c.camera_type)}
+            </td>
+
+            <td>
+              ${esc(c.location)}
+            </td>
+
+            <td>
+              ${esc(c.speed_limit ?? "—")}
+            </td>
+
+            <td>
+              ${esc(c.confidence)}%
+            </td>
+
+            <td>
+              ${
+                c.lat != null
+                  ? Number(c.lat)
+                      .toFixed(5)
+                  : "—"
+              }
+            </td>
+
+            <td>
+              ${
+                c.lng != null
+                  ? Number(c.lng)
+                      .toFixed(5)
+                  : "—"
+              }
+            </td>
+
+            <td>
+              ${
+                c.enabled
+                  ? "Enabled"
+                  : "Disabled"
+              }
+            </td>
+
+            <td>
+              <button
+                class="reject"
+                onclick="deleteCamera(${c.id})">
+                Delete
+              </button>
+            </td>
+
+          </tr>
+        `
+      )
+      .join("");
+
+  byId("cameraTable")
+    .innerHTML =
+    `
+      <table>
+
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Location</th>
+            <th>Limit</th>
+            <th>Confidence</th>
+            <th>Lat</th>
+            <th>Lng</th>
+            <th>State</th>
+            <th></th>
+          </tr>
+        </thead>
+
+        <tbody>
+          ${rows}
+        </tbody>
+
+      </table>
+    `;
+}
+
+async function addCamera(){
+  const payload = {
+    camera_type:
+      byId("cameraType").value,
+
+    location:
+      byId("cameraLocation").value,
+
+    speed_limit:
+      byId("cameraSpeed").value
+        ? Number(
+            byId("cameraSpeed").value
+          )
+        : null,
+
+    confidence:
+      Number(
+        byId("cameraConfidence").value ||
+        50
+      ),
+
+    lat:
+      byId("cameraLat").value
+        ? Number(
+            byId("cameraLat").value
+          )
+        : null,
+
+    lng:
+      byId("cameraLng").value
+        ? Number(
+            byId("cameraLng").value
+          )
+        : null,
+
+    enabled:true
+  };
+
+  const r =
+    await fetch(
+      "/api/admin/cameras",
+      {
+        method:"POST",
+        credentials:"include",
+
+        headers:{
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify(
+            payload
+          )
+      }
+    );
+
+  if (r.ok){
+    [
+      "cameraLocation",
+      "cameraSpeed",
+      "cameraLat",
+      "cameraLng"
+    ]
+    .forEach(
+      id => {
+        byId(id).value = "";
+      }
+    );
+
+    await loadAdmin();
+  }
+}
+
+async function deleteCamera(id){
+  const r =
+    await fetch(
+      `/api/admin/cameras/${id}`,
+      {
+        method:"DELETE",
+        credentials:"include"
+      }
+    );
+
+  if (r.ok){
+    await loadAdmin();
+  }
+}
+
+function renderUsers(){
+  const staffRows =
+    (
+      adminData.users ||
+      []
+    )
+    .map(
+      u => `
+        <tr>
+          <td>${esc(u.name)}</td>
+          <td>${esc(u.role)}</td>
+          <td>
+            ${
+              u.active
+                ? "Active"
+                : "Disabled"
+            }
+          </td>
+        </tr>
+      `
+    )
+    .join("");
+
+  byId("usersTable")
+    .innerHTML =
+    `
+      <table>
+
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Role</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          ${staffRows}
+        </tbody>
+
+      </table>
+    `;
+
+  const appRows =
+    (
+      adminData.app_users ||
+      []
+    )
+    .map(
+      u => `
+        <tr>
+          <td>${esc(u.name)}</td>
+          <td>${esc(u.email)}</td>
+          <td>
+            ${
+              u.active
+                ? "Active"
+                : "Disabled"
+            }
+          </td>
+        </tr>
+      `
+    )
+    .join("");
+
+  byId("appUsersTable")
+    .innerHTML =
+    `
+      <table>
+
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          ${
+            appRows ||
+            '<tr><td colspan="3">No registered app users yet.</td></tr>'
+          }
+        </tbody>
+
+      </table>
+    `;
+}
+
+document
+  .querySelectorAll(".nav")
+  .forEach(
+    btn => {
+      btn.addEventListener(
+        "click",
+        () => {
+          document
+            .querySelectorAll(".nav")
+            .forEach(
+              x =>
+                x.classList.remove(
+                  "active"
+                )
+            );
+
+          btn.classList.add(
+            "active"
+          );
+
+          document
+            .querySelectorAll(".tab")
+            .forEach(
+              x =>
+                x.classList.add(
+                  "hidden"
+                )
+            );
+
+          byId(
+            btn.dataset.tab +
+            "Tab"
+          )
+          .classList
+          .remove(
+            "hidden"
+          );
+
+          byId("pageTitle")
+            .textContent =
+            btn.textContent;
+        }
+      );
+    }
+  );
+
+/* Explicit browser globals for inline HTML handlers */
+
+window.userLogin =
+  userLogin;
+
+window.userRegister =
+  userRegister;
+
+window.userLogout =
+  userLogout;
+
+window.showAuthTab =
+  showAuthTab;
+
+window.adminLogin =
+  adminLogin;
+
+window.adminLogout =
+  adminLogout;
+
+window.centerOnUser =
+  centerOnUser;
+
+window.refreshAllLiveData =
+  refreshAllLiveData;
+
+window.openReportSheet =
+  openReportSheet;
+
+window.closeReportSheet =
+  closeReportSheet;
+
+window.submitReport =
+  submitReport;
+
+window.toggleVoiceAlerts =
+  toggleVoiceAlerts;
+
+window.toggleTrafficLayer =
+  toggleTrafficLayer;
+
+window.focusDestinationSearch =
+  focusDestinationSearch;
+
+window.onDestinationSearchInput =
+  onDestinationSearchInput;
+
+window.onDestinationSearchKeydown =
+  onDestinationSearchKeydown;
+
+window.manualDestinationSearch =
+  manualDestinationSearch;
+
+window.clearDestinationSearch =
+  clearDestinationSearch;
+
+window.changeAppLanguage =
+  changeAppLanguage;
+
+window.dismissCurrentAlert =
+  dismissCurrentAlert;
+
+window.stopNavigation =
+  stopNavigation;
+
+window.manualReroute =
+  manualReroute;
+
+window.enableRouteFollow =
+  enableRouteFollow;
+
+window.showRouteOverview =
+  showRouteOverview;
+
+window.saveCurrentDestination =
+  saveCurrentDestination;
