@@ -27,7 +27,6 @@ let trafficEnabledByUser = true;
 let trafficConfigured = false;
 let trafficRefreshTimer = null;
 let proximityTargets = [];
-
 let proximitySettings = {
   enabled:true,
   voice:true,
@@ -38,15 +37,11 @@ let proximitySettings = {
   defaultCountry:"DE",
   cameraWarningMode:"country_compliance"
 };
-
-let voiceEnabledByUser =
-  safeLocalGet("roadpulse_voice", "on") !== "off";
-
+let voiceEnabledByUser = safeLocalGet("roadpulse_voice", "on") !== "off";
 let lastAlertedAt = new Map();
 let dismissedUntil = new Map();
 let currentProximityTarget = null;
 let proximityEvalTimer = null;
-
 let navigationActive = false;
 let navDestination = null;
 let navRoute = null;
@@ -64,6 +59,11 @@ let navInstructionAnnouncements = new Set();
 let navFollowMode = true;
 let navWakeLock = null;
 let navBaseSummary = null;
+
+let navigationMode =
+  safeLocalGet("roadpulse_nav_mode", "car") === "pedestrian"
+    ? "pedestrian"
+    : "car";
 
 let favoriteDestinations =
   loadStoredDestinations("roadpulse_favorites");
@@ -105,6 +105,9 @@ const UI_TRANSLATIONS = {
     trafficDelay:"Traffic delay",
     distance:"Distance",
     drive:"Drive",
+    walk:"Walk",
+    driveMode:"Drive",
+    walkMode:"Walk",
     eta:"ETA",
     arrived:"You have arrived",
     routeUpdated:"Route updated.",
@@ -139,6 +142,9 @@ const UI_TRANSLATIONS = {
     trafficDelay:"Verkehrsverzögerung",
     distance:"Entfernung",
     drive:"Fahrzeit",
+    walk:"Zu Fuß",
+    driveMode:"Auto",
+    walkMode:"Zu Fuß",
     eta:"Ankunft",
     arrived:"Ziel erreicht",
     routeUpdated:"Route aktualisiert.",
@@ -173,6 +179,9 @@ const UI_TRANSLATIONS = {
     trafficDelay:"Ritardo traffico",
     distance:"Distanza",
     drive:"Durata",
+    walk:"A piedi",
+    driveMode:"Auto",
+    walkMode:"A piedi",
     eta:"Arrivo",
     arrived:"Sei arrivato",
     routeUpdated:"Percorso aggiornato.",
@@ -207,6 +216,9 @@ const UI_TRANSLATIONS = {
     trafficDelay:"Retard trafic",
     distance:"Distance",
     drive:"Durée",
+    walk:"À pied",
+    driveMode:"Voiture",
+    walkMode:"À pied",
     eta:"Arrivée",
     arrived:"Vous êtes arrivé",
     routeUpdated:"Itinéraire mis à jour.",
@@ -241,6 +253,9 @@ const UI_TRANSLATIONS = {
     trafficDelay:"Retraso tráfico",
     distance:"Distancia",
     drive:"Duración",
+    walk:"A pie",
+    driveMode:"Coche",
+    walkMode:"A pie",
     eta:"Llegada",
     arrived:"Has llegado",
     routeUpdated:"Ruta actualizada.",
@@ -275,6 +290,9 @@ const UI_TRANSLATIONS = {
     trafficDelay:"Vertraging",
     distance:"Afstand",
     drive:"Rijtijd",
+    walk:"Lopen",
+    driveMode:"Auto",
+    walkMode:"Lopen",
     eta:"Aankomst",
     arrived:"Je bent aangekomen",
     routeUpdated:"Route bijgewerkt.",
@@ -309,6 +327,9 @@ const UI_TRANSLATIONS = {
     trafficDelay:"Atraso no trânsito",
     distance:"Distância",
     drive:"Duração",
+    walk:"A pé",
+    driveMode:"Carro",
+    walkMode:"A pé",
     eta:"Chegada",
     arrived:"Chegou ao destino",
     routeUpdated:"Rota atualizada.",
@@ -343,6 +364,9 @@ const UI_TRANSLATIONS = {
     trafficDelay:"Opóźnienie",
     distance:"Dystans",
     drive:"Czas jazdy",
+    walk:"Pieszo",
+    driveMode:"Auto",
+    walkMode:"Pieszo",
     eta:"Przyjazd",
     arrived:"Dotarłeś do celu",
     routeUpdated:"Trasa zaktualizowana.",
@@ -377,6 +401,9 @@ const UI_TRANSLATIONS = {
     trafficDelay:"Trafik gecikmesi",
     distance:"Mesafe",
     drive:"Sürüş",
+    walk:"Yürüme",
+    driveMode:"Araç",
+    walkMode:"Yürü",
     eta:"Varış",
     arrived:"Hedefe ulaştınız",
     routeUpdated:"Rota güncellendi.",
@@ -411,7 +438,7 @@ function detectInitialLanguage(){
   const pref =
     SUPPORTED_APP_LANGUAGES.find(
       x =>
-        x.toLowerCase().startsWith(prefix + "-") ||
+        x.toLowerCase().startsWith(prefix+"-") ||
         x.toLowerCase() === prefix
     );
 
@@ -451,7 +478,6 @@ function changeAppLanguage(language){
     navDestination
   ){
     calculateNavigationRoute(true);
-
   }else{
     refreshMapData();
   }
@@ -469,17 +495,14 @@ function initializeLanguageSafe(){
       stored &&
       SUPPORTED_APP_LANGUAGES.includes(stored)
     ){
-      userLanguage =
-        stored;
-
+      userLanguage = stored;
     }else{
       userLanguage =
         detectInitialLanguage();
     }
 
   }catch(_){
-    userLanguage =
-      "en-GB";
+    userLanguage = "en-GB";
   }
 }
 
@@ -539,6 +562,7 @@ function applyAppLanguage(){
   updateNetworkBadge();
   updateBottomNavigationLabels();
   updateRouteControlLabels();
+  updateNavigationModeUI();
 }
 
 function updateBottomNavigationLabels(){
@@ -590,7 +614,9 @@ function updateRouteControlLabels(){
       t("eta");
 
     labels[1].textContent =
-      t("drive");
+      navigationMode === "pedestrian"
+        ? t("walk")
+        : t("drive");
 
     labels[2].textContent =
       t("distance");
@@ -616,12 +642,93 @@ function updateRouteControlLabels(){
   }
 }
 
-function localizedInMeters(n){
-  return t("inMeters")
-    .replace(
-      "{n}",
-      String(n)
+function setNavigationMode(mode){
+  const nextMode =
+    mode === "pedestrian"
+      ? "pedestrian"
+      : "car";
+
+  if (
+    navigationMode === nextMode
+  ){
+    updateNavigationModeUI();
+    return;
+  }
+
+  navigationMode =
+    nextMode;
+
+  safeLocalSet(
+    "roadpulse_nav_mode",
+    navigationMode
+  );
+
+  updateNavigationModeUI();
+
+  if (
+    navigationActive &&
+    navDestination &&
+    currentPosition
+  ){
+    calculateNavigationRoute(true);
+  }
+}
+
+function updateNavigationModeUI(){
+  const carBtn =
+    byId("navModeCarBtn");
+
+  const walkBtn =
+    byId("navModeWalkBtn");
+
+  const summary =
+    byId("routeSummaryCard");
+
+  const durationLabel =
+    byId("routeDurationLabel");
+
+  if (carBtn){
+    carBtn.classList.toggle(
+      "active",
+      navigationMode === "car"
     );
+
+    carBtn.textContent =
+      `🚗 ${t("driveMode")}`;
+  }
+
+  if (walkBtn){
+    walkBtn.classList.toggle(
+      "active",
+      navigationMode === "pedestrian"
+    );
+
+    walkBtn.textContent =
+      `🚶 ${t("walkMode")}`;
+  }
+
+  if (durationLabel){
+    durationLabel.textContent =
+      navigationMode === "pedestrian"
+        ? t("walk")
+        : t("drive");
+  }
+
+  if (summary){
+    summary.classList.toggle(
+      "walking-mode",
+      navigationMode === "pedestrian"
+    );
+  }
+
+  document.body.classList.toggle(
+    "walking-navigation",
+    navigationMode === "pedestrian" &&
+    navigationActive
+  );
+}
+function localizedInMeters(n){
+  return t("inMeters").replace("{n}", String(n));
 }
 
 function localizedAlertTitle(type){
@@ -632,372 +739,183 @@ function localizedAlertTitle(type){
     traffic:"trafficAhead",
     police:"policeAhead"
   };
-
-  return t(
-    keys[type] ||
-    "roadAlertAhead"
-  );
+  return t(keys[type] || "roadAlertAhead");
 }
 
 function loadStoredDestinations(key){
   try{
-    const value =
-      JSON.parse(
-        safeLocalGet(
-          key,
-          "[]"
-        ) ||
-        "[]"
-      );
-
-    return Array.isArray(value)
-      ? value.slice(0,12)
-      : [];
-
+    const value = JSON.parse(safeLocalGet(key, "[]") || "[]");
+    return Array.isArray(value) ? value.slice(0,12) : [];
   }catch(_){
     return [];
   }
 }
 
-function saveStoredDestinations(
-  key,
-  items
-){
+function saveStoredDestinations(key, items){
   try{
-    safeLocalSet(
-      key,
-      JSON.stringify(
-        items.slice(0,12)
-      )
-    );
+    safeLocalSet(key, JSON.stringify(items.slice(0,12)));
   }catch(_){}
 }
 
 function sameDestination(a,b){
-  if (!a || !b){
-    return false;
-  }
-
+  if (!a || !b) return false;
   return (
-    Math.abs(
-      Number(a.lat) -
-      Number(b.lat)
-    ) < 0.00001
-    &&
-    Math.abs(
-      Number(a.lng) -
-      Number(b.lng)
-    ) < 0.00001
+    Math.abs(Number(a.lat)-Number(b.lat)) < 0.00001 &&
+    Math.abs(Number(a.lng)-Number(b.lng)) < 0.00001
   );
 }
 
-const byId =
-  id =>
-    document.getElementById(id);
+const byId = (id) => document.getElementById(id);
 
 function showOnly(id){
-  [
-    "userAuthView",
-    "userAppView",
-    "adminLoginView",
-    "adminView"
-  ]
-  .forEach(
-    x => {
-      const el =
-        byId(x);
-
-      if (el){
-        el.classList.toggle(
-          "hidden",
-          x !== id
-        );
-      }
-    }
-  );
+  ["userAuthView","userAppView","adminLoginView","adminView"].forEach(x=>{
+    const el = byId(x);
+    if (el) el.classList.toggle("hidden", x !== id);
+  });
 }
 
 async function routeByHash(){
   const isAdmin =
-    location.hash.toLowerCase()
-    === "#admin";
+    location.hash.toLowerCase() === "#admin";
 
   if (isAdmin){
     try{
       stopGpsWatch();
     }catch(_){}
 
-    showOnly(
-      "adminLoginView"
-    );
-
+    showOnly("adminLoginView");
     return;
   }
 
   try{
-    const r =
-      await fetch(
-        "/api/auth/me",
-        {
-          credentials:"include"
-        }
-      );
+    const r = await fetch(
+      "/api/auth/me",
+      {credentials:"include"}
+    );
 
     if (r.ok){
-      const data =
-        await r.json();
-
-      currentUser =
-        data.user;
+      const data = await r.json();
+      currentUser = data.user;
 
       try{
         await openUserApp();
-
       }catch(err){
-        console.error(
-          "RoadPulse user app open error:",
-          err
-        );
-
-        showOnly(
-          "userAuthView"
-        );
+        console.error("RoadPulse user app open error:", err);
+        showOnly("userAuthView");
       }
 
       return;
     }
-
   }catch(err){
-    console.error(
-      "RoadPulse auth check error:",
-      err
-    );
+    console.error("RoadPulse auth check error:", err);
   }
 
   try{
     stopGpsWatch();
   }catch(_){}
 
-  showOnly(
-    "userAuthView"
-  );
+  showOnly("userAuthView");
 }
 
-window.addEventListener(
-  "hashchange",
-  routeByHash
-);
+window.addEventListener("hashchange", routeByHash);
 
-window.addEventListener(
-  "load",
-  async () => {
-    try{
-      initializeLanguageSafe();
-      applyAppLanguage();
-      updateNetworkBadge();
-      bindDestinationSearchControls();
-
-    }catch(err){
-      console.error(
-        "RoadPulse UI init warning:",
-        err
-      );
-    }
-
-    try{
-      await routeByHash();
-
-    }catch(err){
-      console.error(
-        "RoadPulse route/auth boot error:",
-        err
-      );
-
-      if (
-        location.hash.toLowerCase()
-        === "#admin"
-      ){
-        showOnly(
-          "adminLoginView"
-        );
-
-      }else{
-        showOnly(
-          "userAuthView"
-        );
-      }
-    }
-
-    window.__ROADPULSE_BOOT_OK__ =
-      true;
-
-    console.log(
-      "RoadPulse Web V1.1 safe boot loaded"
-    );
+window.addEventListener("load", async ()=>{
+  try{
+    initializeLanguageSafe();
+    applyAppLanguage();
+    updateNetworkBadge();
+    bindDestinationSearchControls();
+  }catch(err){
+    console.error("RoadPulse UI init warning:", err);
   }
-);
 
-window.addEventListener(
-  "online",
-  updateNetworkBadge
-);
+  try{
+    await routeByHash();
+  }catch(err){
+    console.error("RoadPulse route/auth boot error:", err);
 
-window.addEventListener(
-  "offline",
-  updateNetworkBadge
-);
-
-document.addEventListener(
-  "visibilitychange",
-  () => {
-    if (
-      document.visibilityState === "visible" &&
-      navigationActive
-    ){
-      requestNavigationWakeLock();
+    if (location.hash.toLowerCase() === "#admin"){
+      showOnly("adminLoginView");
+    }else{
+      showOnly("userAuthView");
     }
   }
-);
+
+  window.__ROADPULSE_BOOT_OK__ = true;
+  console.log("RoadPulse Web V1.2 drive + walk loaded");
+});
+
+window.addEventListener("online", updateNetworkBadge);
+window.addEventListener("offline", updateNetworkBadge);
+
+document.addEventListener("visibilitychange", ()=>{
+  if (
+    document.visibilityState === "visible" &&
+    navigationActive
+  ){
+    requestNavigationWakeLock();
+  }
+});
 
 function updateNetworkBadge(){
-  const badge =
-    byId("networkBadge");
+  const badge = byId("networkBadge");
+  if (!badge) return;
 
-  if (!badge){
-    return;
-  }
-
-  const online =
-    navigator.onLine !== false;
-
-  badge.textContent =
-    online
-      ? t("online")
-      : t("offline");
-
-  badge.classList.toggle(
-    "offline",
-    !online
-  );
+  const online = navigator.onLine !== false;
+  badge.textContent = online ? t("online") : t("offline");
+  badge.classList.toggle("offline", !online);
 }
 
 function showAuthTab(tab){
-  byId("loginForm")
-    .classList
-    .toggle(
-      "hidden",
-      tab !== "login"
-    );
-
-  byId("registerForm")
-    .classList
-    .toggle(
-      "hidden",
-      tab !== "register"
-    );
-
-  byId("loginTabBtn")
-    .classList
-    .toggle(
-      "active",
-      tab === "login"
-    );
-
-  byId("registerTabBtn")
-    .classList
-    .toggle(
-      "active",
-      tab === "register"
-    );
-
+  byId("loginForm").classList.toggle("hidden", tab !== "login");
+  byId("registerForm").classList.toggle("hidden", tab !== "register");
+  byId("loginTabBtn").classList.toggle("active", tab === "login");
+  byId("registerTabBtn").classList.toggle("active", tab === "register");
   setUserAuthMessage("");
 }
 
-function setUserAuthMessage(
-  message,
-  isError=false
-){
-  const el =
-    byId("userAuthMsg");
+function setUserAuthMessage(message, isError=false){
+  const el = byId("userAuthMsg");
 
   if (!message){
-    el.classList.add(
-      "hidden"
-    );
-
+    el.classList.add("hidden");
     return;
   }
 
-  el.textContent =
-    message;
-
-  el.classList.remove(
-    "hidden"
-  );
-
-  el.classList.toggle(
-    "error",
-    isError
-  );
+  el.textContent = message;
+  el.classList.remove("hidden");
+  el.classList.toggle("error", isError);
 }
 
 async function userRegister(){
   setUserAuthMessage("");
 
   const payload = {
-    name:
-      byId("registerName")
-        .value
-        .trim(),
-
-    email:
-      byId("registerEmail")
-        .value
-        .trim(),
-
-    password:
-      byId("registerPassword")
-        .value
+    name: byId("registerName").value.trim(),
+    email: byId("registerEmail").value.trim(),
+    password: byId("registerPassword").value
   };
 
-  const r =
-    await fetch(
-      "/api/auth/register",
-      {
-        method:"POST",
-        credentials:"include",
+  const r = await fetch("/api/auth/register", {
+    method:"POST",
+    credentials:"include",
+    headers:{
+      "Content-Type":"application/json"
+    },
+    body:JSON.stringify(payload)
+  });
 
-        headers:{
-          "Content-Type":
-            "application/json"
-        },
-
-        body:
-          JSON.stringify(
-            payload
-          )
-      }
-    );
-
-  const data =
-    await r.json()
-      .catch(
-        () => ({})
-      );
+  const data = await r.json().catch(()=>({}));
 
   if (!r.ok){
     setUserAuthMessage(
-      data.detail ||
-      "Could not create account.",
+      data.detail || "Could not create account.",
       true
     );
-
     return;
   }
 
-  currentUser =
-    data.user;
-
+  currentUser = data.user;
   await openUserApp();
 }
 
@@ -1005,54 +923,30 @@ async function userLogin(){
   setUserAuthMessage("");
 
   const payload = {
-    email:
-      byId("loginEmail")
-        .value
-        .trim(),
-
-    password:
-      byId("loginPassword")
-        .value
+    email: byId("loginEmail").value.trim(),
+    password: byId("loginPassword").value
   };
 
-  const r =
-    await fetch(
-      "/api/auth/login",
-      {
-        method:"POST",
-        credentials:"include",
+  const r = await fetch("/api/auth/login", {
+    method:"POST",
+    credentials:"include",
+    headers:{
+      "Content-Type":"application/json"
+    },
+    body:JSON.stringify(payload)
+  });
 
-        headers:{
-          "Content-Type":
-            "application/json"
-        },
-
-        body:
-          JSON.stringify(
-            payload
-          )
-      }
-    );
-
-  const data =
-    await r.json()
-      .catch(
-        () => ({})
-      );
+  const data = await r.json().catch(()=>({}));
 
   if (!r.ok){
     setUserAuthMessage(
-      data.detail ||
-      "Login failed.",
+      data.detail || "Login failed.",
       true
     );
-
     return;
   }
 
-  currentUser =
-    data.user;
-
+  currentUser = data.user;
   await openUserApp();
 }
 
@@ -1061,143 +955,94 @@ async function userLogout(){
   stopNavigation(false);
 
   if (navSearchTimer){
-    clearTimeout(
-      navSearchTimer
-    );
-
-    navSearchTimer =
-      null;
+    clearTimeout(navSearchTimer);
+    navSearchTimer = null;
   }
 
   if (proximityEvalTimer){
-    clearInterval(
-      proximityEvalTimer
-    );
-
-    proximityEvalTimer =
-      null;
+    clearInterval(proximityEvalTimer);
+    proximityEvalTimer = null;
   }
 
   if (
     map &&
     trafficFlowLayer &&
-    map.hasLayer(
-      trafficFlowLayer
-    )
+    map.hasLayer(trafficFlowLayer)
   ){
-    map.removeLayer(
-      trafficFlowLayer
-    );
+    map.removeLayer(trafficFlowLayer);
   }
 
   if (
     map &&
     trafficIncidentLayer &&
-    map.hasLayer(
-      trafficIncidentLayer
-    )
+    map.hasLayer(trafficIncidentLayer)
   ){
-    map.removeLayer(
-      trafficIncidentLayer
-    );
+    map.removeLayer(trafficIncidentLayer);
   }
 
-  await fetch(
-    "/api/auth/logout",
-    {
-      method:"POST",
-      credentials:"include"
-    }
-  );
+  await fetch("/api/auth/logout", {
+    method:"POST",
+    credentials:"include"
+  });
 
-  currentUser =
-    null;
-
-  location.hash =
-    "";
-
-  showOnly(
-    "userAuthView"
-  );
+  currentUser = null;
+  location.hash = "";
+  showOnly("userAuthView");
 }
 
 async function openUserApp(){
-  showOnly(
-    "userAppView"
-  );
-
+  showOnly("userAppView");
   applyAppLanguage();
   bindDestinationSearchControls();
 
-  byId("userGreeting")
-    .textContent =
+  byId("userGreeting").textContent =
     currentUser
       ? `Hi ${currentUser.name}`
       : "Live map";
 
   ensureMap();
-
   await refreshMapData();
-
   startGpsWatch();
 
-  setTimeout(
-    () => {
-      if (map){
-        map.invalidateSize();
-      }
-    },
-    50
-  );
+  setTimeout(()=>{
+    if (map){
+      map.invalidateSize();
+    }
+  },50);
 
   if (!proximityEvalTimer){
-    proximityEvalTimer =
-      setInterval(
-        () => {
-          evaluateProximityAlerts();
-        },
-        2000
-      );
+    proximityEvalTimer = setInterval(()=>{
+      evaluateProximityAlerts();
+    },2000);
   }
 }
 
 function ensureMap(){
-  if (map){
-    return;
-  }
+  if (map) return;
 
-  map =
-    L.map(
-      "map",
-      {
-        zoomControl:true
-      }
-    )
-    .setView(
-      [
-        53.5511,
-        9.9937
-      ],
-      12
-    );
+  map = L.map(
+    "map",
+    {
+      zoomControl:true
+    }
+  ).setView(
+    [53.5511,9.9937],
+    12
+  );
 
   L.tileLayer(
     "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     {
       maxZoom:19,
-      attribution:
-        "&copy; OpenStreetMap contributors"
+      attribution:"&copy; OpenStreetMap contributors"
     }
-  )
-  .addTo(map);
+  ).addTo(map);
 
   incidentLayer =
-    L.layerGroup()
-      .addTo(map);
+    L.layerGroup().addTo(map);
 
   cameraLayer =
-    L.layerGroup()
-      .addTo(map);
+    L.layerGroup().addTo(map);
 
   trafficFlowLayer =
     L.tileLayer(
@@ -1227,36 +1072,28 @@ function ensureMap(){
 
   if (!trafficRefreshTimer){
     trafficRefreshTimer =
-      setInterval(
-        () => {
-          if (
-            trafficConfigured &&
-            trafficEnabledByUser
-          ){
-            if (trafficFlowLayer){
-              trafficFlowLayer.redraw();
-            }
-
-            if (trafficIncidentLayer){
-              trafficIncidentLayer.redraw();
-            }
+      setInterval(()=>{
+        if (
+          trafficConfigured &&
+          trafficEnabledByUser
+        ){
+          if (trafficFlowLayer){
+            trafficFlowLayer.redraw();
           }
-        },
-        60000
-      );
+
+          if (trafficIncidentLayer){
+            trafficIncidentLayer.redraw();
+          }
+        }
+      },60000);
   }
 
-  map.on(
-    "dragstart",
-    () => {
-      if (navigationActive){
-        navFollowMode =
-          false;
-
-        updateFollowButton();
-      }
+  map.on("dragstart", ()=>{
+    if (navigationActive){
+      navFollowMode = false;
+      updateFollowButton();
     }
-  );
+  });
 }
 
 function startGpsWatch(){
@@ -1265,7 +1102,6 @@ function startGpsWatch(){
       "GPS not supported",
       false
     );
-
     return;
   }
 
@@ -1279,20 +1115,25 @@ function startGpsWatch(){
   );
 
   watchId =
-    navigator.geolocation
-      .watchPosition(
-        onGpsPosition,
-        onGpsError,
-        {
-          enableHighAccuracy:true,
-          maximumAge:5000,
-          timeout:15000
-        }
-      );
+    navigator.geolocation.watchPosition(
+      onGpsPosition,
+      onGpsError,
+      {
+        enableHighAccuracy:true,
+        maximumAge:5000,
+        timeout:15000
+      }
+    );
 }
+
 function stopGpsWatch(){
-  if (watchId !== null && navigator.geolocation){
-    navigator.geolocation.clearWatch(watchId);
+  if (
+    watchId !== null &&
+    navigator.geolocation
+  ){
+    navigator.geolocation.clearWatch(
+      watchId
+    );
   }
 
   watchId = null;
@@ -1300,11 +1141,11 @@ function stopGpsWatch(){
 
 function onGpsPosition(pos){
   currentPosition = {
-    lat: pos.coords.latitude,
-    lng: pos.coords.longitude,
-    accuracy: pos.coords.accuracy,
-    speed: pos.coords.speed,
-    heading: pos.coords.heading
+    lat:pos.coords.latitude,
+    lng:pos.coords.longitude,
+    accuracy:pos.coords.accuracy,
+    speed:pos.coords.speed,
+    heading:pos.coords.heading
   };
 
   const latlng = [
@@ -1313,35 +1154,37 @@ function onGpsPosition(pos){
   ];
 
   if (!userMarker){
-    userMarker = L.circleMarker(
-      latlng,
-      {
-        radius:9,
-        color:"#ffffff",
-        weight:3,
-        fillColor:"#2d70d6",
-        fillOpacity:1
-      }
-    )
-    .addTo(map)
-    .bindPopup(
-      "<strong>Your live GPS location</strong>"
-    );
+    userMarker =
+      L.circleMarker(
+        latlng,
+        {
+          radius:9,
+          color:"#ffffff",
+          weight:3,
+          fillColor:"#2d70d6",
+          fillOpacity:1
+        }
+      )
+      .addTo(map)
+      .bindPopup(
+        "<strong>Your live GPS location</strong>"
+      );
   }else{
     userMarker.setLatLng(latlng);
   }
 
   if (!userAccuracyCircle){
-    userAccuracyCircle = L.circle(
-      latlng,
-      {
-        radius:currentPosition.accuracy,
-        color:"#2d70d6",
-        weight:1,
-        fillOpacity:.08
-      }
-    )
-    .addTo(map);
+    userAccuracyCircle =
+      L.circle(
+        latlng,
+        {
+          radius:currentPosition.accuracy,
+          color:"#2d70d6",
+          weight:1,
+          fillOpacity:.08
+        }
+      )
+      .addTo(map);
   }else{
     userAccuracyCircle.setLatLng(latlng);
     userAccuracyCircle.setRadius(
@@ -1390,7 +1233,9 @@ function onGpsPosition(pos){
       ],
       Math.max(
         map.getZoom(),
-        16
+        navigationMode === "pedestrian"
+          ? 17
+          : 16
       ),
       {
         animate:true
@@ -1407,31 +1252,18 @@ function onGpsError(err){
   };
 
   setGpsBadge(
-    messages[err.code] ||
-    "GPS error",
+    messages[err.code] || "GPS error",
     false
   );
 }
 
 function setGpsBadge(text,good){
-  const el =
-    byId("gpsBadge");
-
-  if (!el){
-    return;
-  }
+  const el = byId("gpsBadge");
+  if (!el) return;
 
   el.textContent = text;
-
-  el.classList.toggle(
-    "good",
-    !!good
-  );
-
-  el.classList.toggle(
-    "warning",
-    !good
-  );
+  el.classList.toggle("good",!!good);
+  el.classList.toggle("warning",!good);
 }
 
 function centerOnUser(){
@@ -1449,7 +1281,9 @@ function centerOnUser(){
         currentPosition.lat,
         currentPosition.lng
       ],
-      16
+      navigationMode === "pedestrian"
+        ? 17
+        : 16
     );
 
     if (userMarker){
@@ -1470,27 +1304,22 @@ const reportStyle = {
     color:"#2d70d6",
     emoji:"📷"
   },
-
   police:{
     color:"#3159b8",
     emoji:"🚓"
   },
-
   accident:{
     color:"#d63b32",
     emoji:"🚗"
   },
-
   hazard:{
     color:"#e09b18",
     emoji:"⚠️"
   },
-
   roadwork:{
     color:"#d97818",
     emoji:"🚧"
   },
-
   traffic:{
     color:"#17a65b",
     emoji:"🚦"
@@ -1498,17 +1327,14 @@ const reportStyle = {
 };
 
 async function refreshMapData(){
-  if (!map){
-    return;
-  }
+  if (!map) return;
 
-  const r =
-    await fetch(
-      "/api/map-data",
-      {
-        credentials:"include"
-      }
-    );
+  const r = await fetch(
+    "/api/map-data",
+    {
+      credentials:"include"
+    }
+  );
 
   if (r.status === 401){
     await userLogout();
@@ -1519,100 +1345,86 @@ async function refreshMapData(){
     return;
   }
 
-  const data =
-    await r.json();
+  const data = await r.json();
 
   incidentLayer.clearLayers();
   cameraLayer.clearLayers();
 
-  data.reports.forEach(
-    item => {
-      const style =
-        reportStyle[item.type] ||
+  data.reports.forEach(item=>{
+    const style =
+      reportStyle[item.type] ||
+      {
+        color:"#666",
+        emoji:"•"
+      };
+
+    const marker =
+      L.circleMarker(
+        [item.lat,item.lng],
         {
-          color:"#666",
-          emoji:"•"
-        };
-
-      const marker =
-        L.circleMarker(
-          [
-            item.lat,
-            item.lng
-          ],
-          {
-            radius:9,
-            color:"#fff",
-            weight:2,
-            fillColor:style.color,
-            fillOpacity:.95
-          }
-        );
-
-      marker.bindPopup(`
-        <div class="popup-title">
-          ${style.emoji}
-          ${esc(item.type)}
-        </div>
-
-        <div>
-          ${esc(
-            item.location ||
-            "Reported location"
-          )}
-        </div>
-
-        <div class="popup-meta">
-          Community verified
-        </div>
-      `);
-
-      marker.addTo(
-        incidentLayer
+          radius:9,
+          color:"#fff",
+          weight:2,
+          fillColor:style.color,
+          fillOpacity:.95
+        }
       );
-    }
-  );
 
-  data.cameras.forEach(
-    item => {
-      const marker =
-        L.marker(
-          [
-            item.lat,
-            item.lng
-          ],
-          {
-            title:
-              `Camera: ${item.location}`
-          }
-        );
+    marker.bindPopup(`
+      <div class="popup-title">
+        ${style.emoji} ${esc(item.type)}
+      </div>
 
-      const limit =
-        item.speed_limit
-          ? `${item.speed_limit} km/h`
-          : "Speed unknown";
+      <div>
+        ${esc(
+          item.location ||
+          "Reported location"
+        )}
+      </div>
 
-      marker.bindPopup(`
-        <div class="popup-title">
-          📷 ${esc(item.camera_type)} camera
-        </div>
+      <div class="popup-meta">
+        Community verified
+      </div>
+    `);
 
-        <div>
-          ${esc(item.location)}
-        </div>
+    marker.addTo(
+      incidentLayer
+    );
+  });
 
-        <div class="popup-meta">
-          ${esc(limit)}
-          · confidence
-          ${esc(item.confidence)}%
-        </div>
-      `);
-
-      marker.addTo(
-        cameraLayer
+  data.cameras.forEach(item=>{
+    const marker =
+      L.marker(
+        [item.lat,item.lng],
+        {
+          title:
+            `Camera: ${item.location}`
+        }
       );
-    }
-  );
+
+    const limit =
+      item.speed_limit
+        ? `${item.speed_limit} km/h`
+        : "Speed unknown";
+
+    marker.bindPopup(`
+      <div class="popup-title">
+        📷 ${esc(item.camera_type)} camera
+      </div>
+
+      <div>
+        ${esc(item.location)}
+      </div>
+
+      <div class="popup-meta">
+        ${esc(limit)} · confidence ${esc(item.confidence)}%
+      </div>
+    `);
+
+    marker.addTo(
+      cameraLayer
+    );
+  });
 
   const incidentBadge =
     byId("incidentBadge");
@@ -1624,47 +1436,39 @@ async function refreshMapData(){
 
   proximitySettings = {
     enabled:
-      data.settings
-        .proximity_alerts !== false,
+      data.settings.proximity_alerts !== false,
 
     voice:
-      data.settings
-        .voice_alerts !== false,
+      data.settings.voice_alerts !== false,
 
     maxDistanceM:
       Number(
-        data.settings
-          .alert_distance_m ||
+        data.settings.alert_distance_m ||
         1200
       ),
 
     urgentDistanceM:
       Number(
-        data.settings
-          .urgent_alert_distance_m ||
+        data.settings.urgent_alert_distance_m ||
         400
       ),
 
     cooldownS:
       Number(
-        data.settings
-          .alert_repeat_cooldown_s ||
+        data.settings.alert_repeat_cooldown_s ||
         300
       ),
 
     language:
-      data.settings
-        .voice_language ||
+      data.settings.voice_language ||
       "en-GB",
 
     defaultCountry:
-      data.settings
-        .default_country ||
+      data.settings.default_country ||
       "DE",
 
     cameraWarningMode:
-      data.settings
-        .camera_warning_mode ||
+      data.settings.camera_warning_mode ||
       "country_compliance"
   };
 
@@ -1675,12 +1479,10 @@ async function refreshMapData(){
   evaluateProximityAlerts();
 
   trafficConfigured =
-    !!data.settings
-      .traffic_available;
+    !!data.settings.traffic_available;
 
   const adminTrafficEnabled =
-    data.settings
-      .traffic_layer !== false;
+    data.settings.traffic_layer !== false;
 
   applyTrafficLayerState(
     adminTrafficEnabled
@@ -1696,19 +1498,14 @@ function applyTrafficLayerState(
   const legend =
     byId("trafficLegend");
 
-  if (
-    !badge ||
-    !map
-  ){
+  if (!badge || !map){
     return;
   }
 
   if (!trafficConfigured){
     if (
       trafficFlowLayer &&
-      map.hasLayer(
-        trafficFlowLayer
-      )
+      map.hasLayer(trafficFlowLayer)
     ){
       map.removeLayer(
         trafficFlowLayer
@@ -1717,9 +1514,7 @@ function applyTrafficLayerState(
 
     if (
       trafficIncidentLayer &&
-      map.hasLayer(
-        trafficIncidentLayer
-      )
+      map.hasLayer(trafficIncidentLayer)
     ){
       map.removeLayer(
         trafficIncidentLayer
@@ -1750,9 +1545,7 @@ function applyTrafficLayerState(
   if (!adminTrafficEnabled){
     if (
       trafficFlowLayer &&
-      map.hasLayer(
-        trafficFlowLayer
-      )
+      map.hasLayer(trafficFlowLayer)
     ){
       map.removeLayer(
         trafficFlowLayer
@@ -1761,9 +1554,7 @@ function applyTrafficLayerState(
 
     if (
       trafficIncidentLayer &&
-      map.hasLayer(
-        trafficIncidentLayer
-      )
+      map.hasLayer(trafficIncidentLayer)
     ){
       map.removeLayer(
         trafficIncidentLayer
@@ -1794,18 +1585,14 @@ function applyTrafficLayerState(
   if (trafficEnabledByUser){
     if (
       trafficFlowLayer &&
-      !map.hasLayer(
-        trafficFlowLayer
-      )
+      !map.hasLayer(trafficFlowLayer)
     ){
       trafficFlowLayer.addTo(map);
     }
 
     if (
       trafficIncidentLayer &&
-      !map.hasLayer(
-        trafficIncidentLayer
-      )
+      !map.hasLayer(trafficIncidentLayer)
     ){
       trafficIncidentLayer.addTo(map);
     }
@@ -1830,9 +1617,7 @@ function applyTrafficLayerState(
   }else{
     if (
       trafficFlowLayer &&
-      map.hasLayer(
-        trafficFlowLayer
-      )
+      map.hasLayer(trafficFlowLayer)
     ){
       map.removeLayer(
         trafficFlowLayer
@@ -1841,9 +1626,7 @@ function applyTrafficLayerState(
 
     if (
       trafficIncidentLayer &&
-      map.hasLayer(
-        trafficIncidentLayer
-      )
+      map.hasLayer(trafficIncidentLayer)
     ){
       map.removeLayer(
         trafficIncidentLayer
@@ -1928,7 +1711,7 @@ function bindDestinationSearchControls(){
 
   input.addEventListener(
     "focus",
-    () => {
+    ()=>{
       if (!input.value.trim()){
         renderDestinationQuickList();
       }
@@ -1979,8 +1762,7 @@ async function manualDestinationSearch(){
       navSearchTimer
     );
 
-    navSearchTimer =
-      null;
+    navSearchTimer = null;
   }
 
   await searchDestinations(q);
@@ -2012,9 +1794,7 @@ function onDestinationSearchKeydown(event){
   if (event.key === "Enter"){
     event.preventDefault();
 
-    if (
-      navSearchResults.length > 0
-    ){
+    if (navSearchResults.length > 0){
       chooseDestinationResult(0);
     }else{
       manualDestinationSearch();
@@ -2036,12 +1816,10 @@ function onDestinationSearchInput(){
   const q =
     input.value.trim();
 
-  if (clearBtn){
-    clearBtn.classList.toggle(
-      "hidden",
-      q.length === 0
-    );
-  }
+  clearBtn?.classList.toggle(
+    "hidden",
+    q.length === 0
+  );
 
   if (navSearchTimer){
     clearTimeout(
@@ -2057,7 +1835,6 @@ function onDestinationSearchInput(){
       .add("hidden");
 
     renderDestinationQuickList();
-
     return;
   }
 
@@ -2066,12 +1843,9 @@ function onDestinationSearchInput(){
     .add("hidden");
 
   navSearchTimer =
-    setTimeout(
-      () => {
-        searchDestinations(q);
-      },
-      320
-    );
+    setTimeout(()=>{
+      searchDestinations(q);
+    },320);
 }
 
 async function searchDestinations(q){
@@ -2083,25 +1857,7 @@ async function searchDestinations(q){
   }
 
   resultsBox.innerHTML =
-    `
-      <div class="destination-result">
-
-        <div class="destination-result-icon">
-          …
-        </div>
-
-        <div>
-          <strong>
-            Searching
-          </strong>
-
-          <small>
-            Finding destinations near you
-          </small>
-        </div>
-
-      </div>
-    `;
+    '<div class="destination-result"><div class="destination-result-icon">…</div><div><strong>Searching</strong><small>Finding destinations near you</small></div></div>';
 
   resultsBox.classList.remove(
     "hidden"
@@ -2139,9 +1895,7 @@ async function searchDestinations(q){
 
     const data =
       await r.json()
-        .catch(
-          () => ({})
-        );
+        .catch(()=>({}));
 
     if (!r.ok){
       throw new Error(
@@ -2159,28 +1913,7 @@ async function searchDestinations(q){
     navSearchResults = [];
 
     resultsBox.innerHTML =
-      `
-        <div class="destination-result">
-
-          <div class="destination-result-icon">
-            !
-          </div>
-
-          <div>
-            <strong>
-              Search unavailable
-            </strong>
-
-            <small>
-              ${esc(
-                err.message ||
-                "Please try again"
-              )}
-            </small>
-          </div>
-
-        </div>
-      `;
+      `<div class="destination-result"><div class="destination-result-icon">!</div><div><strong>Search unavailable</strong><small>${esc(err.message || "Please try again")}</small></div></div>`;
   }
 }
 
@@ -2192,29 +1925,9 @@ function renderDestinationResults(){
     return;
   }
 
-  if (
-    navSearchResults.length === 0
-  ){
+  if (navSearchResults.length === 0){
     box.innerHTML =
-      `
-        <div class="destination-result">
-
-          <div class="destination-result-icon">
-            ⌕
-          </div>
-
-          <div>
-            <strong>
-              No results
-            </strong>
-
-            <small>
-              Try a street, city or place name
-            </small>
-          </div>
-
-        </div>
-      `;
+      '<div class="destination-result"><div class="destination-result-icon">⌕</div><div><strong>No results</strong><small>Try a street, city or place name</small></div></div>';
 
     box.classList.remove(
       "hidden"
@@ -2226,16 +1939,15 @@ function renderDestinationResults(){
   box.innerHTML =
     navSearchResults
       .map(
-        (item,index) => {
+        (item,index)=>{
           const saved =
-            favoriteDestinations
-              .some(
-                x =>
-                  sameDestination(
-                    x,
-                    item
-                  )
-              );
+            favoriteDestinations.some(
+              x =>
+                sameDestination(
+                  x,
+                  item
+                )
+            );
 
           return `
             <div class="destination-result">
@@ -2271,9 +1983,7 @@ function renderDestinationResults(){
                 class="destination-result-save ${saved ? "saved" : ""}"
                 onclick="toggleFavoriteSearchResult(event,${index})"
                 title="Save destination">
-
                 ${saved ? "★" : "☆"}
-
               </button>
 
             </div>
@@ -2282,20 +1992,12 @@ function renderDestinationResults(){
       )
       .join("");
 
-  box.classList.remove(
-    "hidden"
-  );
+  box.classList.remove("hidden");
 }
-
 function chooseDestinationResult(index){
   unlockNavigationAudio();
-
-  const item =
-    navSearchResults[index];
-
-  if (!item){
-    return;
-  }
+  const item = navSearchResults[index];
+  if (!item) return;
 
   navDestination = {
     name:item.name,
@@ -2304,56 +2006,27 @@ function chooseDestinationResult(index){
     lng:Number(item.lng)
   };
 
-  const input =
-    byId("destinationSearchInput");
-
+  const input = byId("destinationSearchInput");
   if (input){
-    input.value =
-      item.name;
+    input.value = item.name;
   }
 
-  byId("destinationResults")
-    ?.classList
-    .add("hidden");
+  byId("destinationResults")?.classList.add("hidden");
+  byId("destinationQuickList")?.classList.add("hidden");
+  byId("clearDestinationBtn")?.classList.remove("hidden");
 
-  byId("destinationQuickList")
-    ?.classList
-    .add("hidden");
-
-  byId("clearDestinationBtn")
-    ?.classList
-    .remove("hidden");
-
-  rememberRecentDestination(
-    navDestination
-  );
-
+  rememberRecentDestination(navDestination);
   requestNavigationWakeLock();
-
   startNavigation();
 }
 
 function clearDestinationSearch(){
-  const input =
-    byId("destinationSearchInput");
-
-  if (input){
-    input.value = "";
-  }
-
+  const input = byId("destinationSearchInput");
+  if (input) input.value = "";
   navSearchResults = [];
-
-  byId("destinationResults")
-    ?.classList
-    .add("hidden");
-
-  byId("destinationQuickList")
-    ?.classList
-    .add("hidden");
-
-  byId("clearDestinationBtn")
-    ?.classList
-    .add("hidden");
+  byId("destinationResults")?.classList.add("hidden");
+  byId("destinationQuickList")?.classList.add("hidden");
+  byId("clearDestinationBtn")?.classList.add("hidden");
 
   if (navigationActive){
     stopNavigation();
@@ -2367,186 +2040,119 @@ async function startNavigation(){
   }
 
   if (!currentPosition){
-    setGpsBadge(
-      "Waiting for GPS to start route…",
-      false
-    );
-
+    setGpsBadge("Waiting for GPS to start route…", false);
     startGpsWatch();
     return;
   }
 
-  await calculateNavigationRoute(
-    false
-  );
+  await calculateNavigationRoute(false);
 }
 
-async function calculateNavigationRoute(
-  isReroute=false
-){
-  if (
-    !currentPosition ||
-    !navDestination ||
-    navRequestInFlight
-  ){
+async function calculateNavigationRoute(isReroute=false){
+  if (!currentPosition || !navDestination || navRequestInFlight){
     return;
   }
 
   navRequestInFlight = true;
 
-  const search =
-    byId("destinationSearchInput");
-
-  search
-    ?.closest(".destination-search")
-    ?.classList
-    .add("navigation-loading");
+  const search = byId("destinationSearchInput");
+  search?.closest(".destination-search")?.classList.add("navigation-loading");
 
   try{
-    const r =
-      await fetch(
-        "/api/navigation/route",
-        {
-          method:"POST",
-          credentials:"include",
+    const r = await fetch("/api/navigation/route", {
+      method:"POST",
+      credentials:"include",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        origin_lat:currentPosition.lat,
+        origin_lng:currentPosition.lng,
+        destination_lat:navDestination.lat,
+        destination_lng:navDestination.lng,
+        destination_name:navDestination.name,
+        language:userLanguage || "en-GB",
+        travel_mode:navigationMode
+      })
+    });
 
-          headers:{
-            "Content-Type":
-              "application/json"
-          },
-
-          body:
-            JSON.stringify({
-              origin_lat:
-                currentPosition.lat,
-
-              origin_lng:
-                currentPosition.lng,
-
-              destination_lat:
-                navDestination.lat,
-
-              destination_lng:
-                navDestination.lng,
-
-              destination_name:
-                navDestination.name,
-
-              language:
-                userLanguage ||
-                "en-GB"
-            })
-        }
-      );
-
-    const data =
-      await r.json()
-        .catch(
-          () => ({})
-        );
-
+    const data = await r.json().catch(()=>({}));
     if (!r.ok){
-      throw new Error(
-        data.detail ||
-        "Could not calculate route"
-      );
+      throw new Error(data.detail || "Could not calculate route");
     }
 
-    applyNavigationRoute(
-      data,
-      isReroute
-    );
-
+    applyNavigationRoute(data, isReroute);
   }catch(err){
-    const card =
-      byId("navigationCard");
-
+    const card = byId("navigationCard");
     if (card){
-      card.classList.remove(
-        "hidden"
-      );
-
-      byId("navManeuverIcon")
-        .textContent = "!";
-
-      byId("navInstruction")
-        .textContent =
-        "Route unavailable";
-
-      byId("navInstructionDistance")
-        .textContent = "";
-
-      byId("navDestinationName")
-        .textContent =
-        err.message ||
-        "Please try again";
+      card.classList.remove("hidden");
+      byId("navManeuverIcon").textContent = "!";
+      byId("navInstruction").textContent = "Route unavailable";
+      byId("navInstructionDistance").textContent = "";
+      byId("navDestinationName").textContent =
+        err.message || "Please try again";
     }
-
   }finally{
     navRequestInFlight = false;
-
-    search
-      ?.closest(".destination-search")
-      ?.classList
-      .remove("navigation-loading");
+    search?.closest(".destination-search")?.classList.remove("navigation-loading");
   }
 }
 
-function applyNavigationRoute(
-  data,
-  isReroute=false
-){
+function applyNavigationRoute(data, isReroute=false){
   navRoute = data;
 
-  navRoutePoints =
-    data.points || [];
-
-  navInstructions =
-    data.instructions || [];
-
-  navCurrentInstructionIndex = 0;
-  navLastProgressIndex = 0;
-
-  navInstructionAnnouncements.clear();
-
-  navigationActive = true;
-  navFollowMode = true;
-
-  navBaseSummary =
-    data.summary || {};
-
-  navLastRerouteAt =
-    Date.now();
-
-  navLastTrafficRefreshAt =
-    Date.now();
-
-  document.body
-    .classList
-    .add(
-      "navigation-active"
-    );
-
   if (
-    navRouteLayer &&
-    map
+    data.travelMode === "pedestrian" ||
+    data.travelMode === "car"
   ){
-    map.removeLayer(
-      navRouteLayer
-    );
+    navigationMode = data.travelMode;
   }
 
-  navRouteLayer =
-    L.polyline(
-      navRoutePoints,
-      {
-        color:"#1769d2",
-        weight:7,
-        opacity:.88,
-        lineJoin:"round"
-      }
-    )
-    .addTo(map);
+  safeLocalSet(
+    "roadpulse_nav_mode",
+    navigationMode
+  );
+
+  navRoutePoints = data.points || [];
+  navInstructions = data.instructions || [];
+  navCurrentInstructionIndex = 0;
+  navLastProgressIndex = 0;
+  navInstructionAnnouncements.clear();
+  navigationActive = true;
+  navFollowMode = true;
+  navBaseSummary = data.summary || {};
+  navLastRerouteAt = Date.now();
+  navLastTrafficRefreshAt = Date.now();
+
+  document.body.classList.add("navigation-active");
+
+  if (navRouteLayer && map){
+    map.removeLayer(navRouteLayer);
+  }
+
+  const walkingRoute =
+    navigationMode === "pedestrian";
+
+  navRouteLayer = L.polyline(
+    navRoutePoints,
+    {
+      color:
+        walkingRoute
+          ? "#0f9f61"
+          : "#1769d2",
+
+      weight:
+        walkingRoute
+          ? 6
+          : 7,
+
+      opacity:.9,
+      lineJoin:"round",
+
+      dashArray:
+        walkingRoute
+          ? "10 8"
+          : null
+    }
+  ).addTo(map);
 
   if (!isReroute){
     try{
@@ -2576,8 +2182,8 @@ function applyNavigationRoute(
     ?.classList
     .add("hidden");
 
+  updateNavigationModeUI();
   updateFollowButton();
-
   requestNavigationWakeLock();
 
   updateRouteSummary(
@@ -2598,43 +2204,40 @@ function applyNavigationRoute(
 }
 
 function updateRouteSummary(summary){
-  byId("routeEta")
-    .textContent =
+  byId("routeEta").textContent =
     formatArrivalTime(
       summary.arrivalTime
     );
 
-  byId("routeDuration")
-    .textContent =
+  byId("routeDuration").textContent =
     formatDuration(
-      summary.travelTimeSeconds ||
-      0
+      summary.travelTimeSeconds || 0
     );
 
-  byId("routeDistance")
-    .textContent =
+  byId("routeDistance").textContent =
     formatRouteDistance(
-      summary.lengthMeters ||
-      0
+      summary.lengthMeters || 0
     );
 
   const delay =
     Number(
-      summary.trafficDelaySeconds ||
-      0
+      summary.trafficDelaySeconds || 0
     );
 
-  byId("routeDelay")
-    .textContent =
-    delay > 30
-      ? `+${formatDuration(delay)}`
-      : "None";
+  byId("routeDelay").textContent =
+    navigationMode === "pedestrian"
+      ? "—"
+      : (
+          delay > 30
+            ? `+${formatDuration(delay)}`
+            : "None"
+        );
+
+  updateNavigationModeUI();
 }
 
 function formatArrivalTime(value){
-  if (!value){
-    return "—";
-  }
+  if (!value) return "—";
 
   const date =
     new Date(value);
@@ -2647,14 +2250,13 @@ function formatArrivalTime(value){
     return "—";
   }
 
-  return date
-    .toLocaleTimeString(
-      [],
-      {
-        hour:"2-digit",
-        minute:"2-digit"
-      }
-    );
+  return date.toLocaleTimeString(
+    [],
+    {
+      hour:"2-digit",
+      minute:"2-digit"
+    }
+  );
 }
 
 function formatDuration(seconds){
@@ -2662,9 +2264,7 @@ function formatDuration(seconds){
     Math.max(
       0,
       Math.round(
-        Number(
-          seconds || 0
-        ) / 60
+        Number(seconds || 0) / 60
       )
     );
 
@@ -2687,23 +2287,21 @@ function formatDuration(seconds){
 
 function formatRouteDistance(meters){
   const m =
-    Number(
-      meters || 0
-    );
+    Number(meters || 0);
 
   if (m < 1000){
     return `${Math.round(m)} m`;
   }
 
   return `${
-    (m / 1000)
-      .toFixed(
-        m < 10000
-          ? 1
-          : 0
-      )
+    (m/1000).toFixed(
+      m < 10000
+        ? 1
+        : 0
+    )
   } km`;
 }
+
 function stopNavigation(clearDestination=true){
   navigationActive = false;
   navRoute = null;
@@ -2714,9 +2312,16 @@ function stopNavigation(clearDestination=true){
   navInstructionAnnouncements.clear();
   navBaseSummary = null;
   navFollowMode = true;
+
   releaseNavigationWakeLock();
 
-  document.body.classList.remove("navigation-active");
+  document.body.classList.remove(
+    "navigation-active"
+  );
+
+  document.body.classList.remove(
+    "walking-navigation"
+  );
 
   if (navRouteLayer && map){
     map.removeLayer(navRouteLayer);
@@ -2776,9 +2381,7 @@ function updateNavigationProgress(){
       currentPosition.lng
     );
 
-  if (!nearest){
-    return;
-  }
+  if (!nearest) return;
 
   navLastProgressIndex =
     Math.max(
@@ -2818,22 +2421,39 @@ function updateNavigationProgress(){
       currentPosition.speed || 0
     );
 
+  const walking =
+    navigationMode === "pedestrian";
+
+  const offRouteDistance =
+    walking
+      ? 45
+      : 120;
+
+  const movementThreshold =
+    walking
+      ? 0.35
+      : 2.5;
+
+  const rerouteCooldown =
+    walking
+      ? 20000
+      : 35000;
+
   if (
-    nearest.distanceM > 120 &&
-    speed > 2.5 &&
-    now - navLastRerouteAt > 35000
+    nearest.distanceM > offRouteDistance &&
+    speed > movementThreshold &&
+    now - navLastRerouteAt > rerouteCooldown
   ){
     calculateNavigationRoute(true);
     return;
   }
 
   if (
+    !walking &&
     speed > 2.5 &&
     now - navLastTrafficRefreshAt > 180000
   ){
-    navLastTrafficRefreshAt =
-      now;
-
+    navLastTrafficRefreshAt = now;
     calculateNavigationRoute(true);
   }
 
@@ -2845,32 +2465,31 @@ function updateNavigationProgress(){
       navDestination.lng
     );
 
-  if (destinationDistance < 35){
-    byId("navManeuverIcon")
-      .textContent = "✓";
-
-    byId("navInstruction")
-      .textContent =
-      t("arrived");
-
-    byId("navInstructionDistance")
-      .textContent = "";
-
-    byId("navDestinationName")
-      .textContent =
+  if (
+    destinationDistance <
+    (
+      navigationMode === "pedestrian"
+        ? 22
+        : 35
+    )
+  ){
+    byId("navManeuverIcon").textContent = "✓";
+    byId("navInstruction").textContent = t("arrived");
+    byId("navInstructionDistance").textContent = "";
+    byId("navDestinationName").textContent =
       navDestination.name;
 
     const arrivalKey =
       "arrival";
 
     if (
-      !navInstructionAnnouncements
-        .has(arrivalKey) &&
+      !navInstructionAnnouncements.has(arrivalKey) &&
       voiceEnabledByUser &&
       proximitySettings.voice
     ){
-      navInstructionAnnouncements
-        .add(arrivalKey);
+      navInstructionAnnouncements.add(
+        arrivalKey
+      );
 
       speakNavigationMessage(
         t("arrived")
@@ -2943,9 +2562,7 @@ function findNextInstructionIndex(
     }
   }
 
-  return (
-    navInstructions.length - 1
-  );
+  return navInstructions.length - 1;
 }
 
 function renderNavigationInstruction(
@@ -2968,19 +2585,16 @@ function renderNavigationInstruction(
         )
       : 0;
 
-  byId("navManeuverIcon")
-    .textContent =
+  byId("navManeuverIcon").textContent =
     maneuverIcon(
       instruction.maneuver
     );
 
-  byId("navInstruction")
-    .textContent =
+  byId("navInstruction").textContent =
     instruction.message ||
     "Continue";
 
-  byId("navInstructionDistance")
-    .textContent =
+  byId("navInstructionDistance").textContent =
     distance > 0
       ? formatDistance(distance)
       : "";
@@ -2998,8 +2612,7 @@ function renderNavigationInstruction(
       roadName || "—";
   }
 
-  byId("navDestinationName")
-    .textContent =
+  byId("navDestinationName").textContent =
     navDestination?.name ||
     t("destination");
 }
@@ -3043,10 +2656,7 @@ function maneuverIcon(maneuver){
     DEPART:"↑"
   };
 
-  return (
-    icons[maneuver] ||
-    "↑"
-  );
+  return icons[maneuver] || "↑";
 }
 
 function getInstructionRoadName(
@@ -3154,38 +2764,30 @@ function playNavigationChime(
     const gain =
       ctx.createGain();
 
-    osc.type =
-      "sine";
+    osc.type = "sine";
 
-    osc.frequency
-      .setValueAtTime(
-        note.f,
-        now + note.t
-      );
+    osc.frequency.setValueAtTime(
+      note.f,
+      now + note.t
+    );
 
-    gain.gain
-      .setValueAtTime(
-        0.0001,
-        now + note.t
-      );
+    gain.gain.setValueAtTime(
+      0.0001,
+      now + note.t
+    );
 
-    gain.gain
-      .exponentialRampToValueAtTime(
-        0.12,
-        now + note.t + 0.015
-      );
+    gain.gain.exponentialRampToValueAtTime(
+      0.12,
+      now + note.t + 0.015
+    );
 
-    gain.gain
-      .exponentialRampToValueAtTime(
-        0.0001,
-        now + note.t + note.d
-      );
+    gain.gain.exponentialRampToValueAtTime(
+      0.0001,
+      now + note.t + note.d
+    );
 
     osc.connect(gain);
-
-    gain.connect(
-      ctx.destination
-    );
+    gain.connect(ctx.destination);
 
     osc.start(
       now + note.t
@@ -3229,13 +2831,18 @@ function navigationVoiceMessage(
       `${base}. ${t("nextRoad")}: ${road}.`;
   }
 
-  if (threshold <= 70){
+  if (
+    threshold <=
+    (
+      navigationMode === "pedestrian"
+        ? 25
+        : 70
+    )
+  ){
     return message;
   }
 
-  return (
-    `${localizedInMeters(threshold)}, ${message}`
-  );
+  return `${localizedInMeters(threshold)}, ${message}`;
 }
 
 function maybeSpeakTurnInstruction(
@@ -3260,17 +2867,31 @@ function maybeSpeakTurnInstruction(
       Number(instruction.lng)
     );
 
-  let threshold =
-    null;
+  let threshold = null;
 
-  if (distance <= 70){
-    threshold = 70;
+  if (
+    navigationMode === "pedestrian"
+  ){
+    if (distance <= 25){
+      threshold = 25;
 
-  }else if (distance <= 250){
-    threshold = 250;
+    }else if (distance <= 80){
+      threshold = 80;
 
-  }else if (distance <= 700){
-    threshold = 700;
+    }else if (distance <= 200){
+      threshold = 200;
+    }
+
+  }else{
+    if (distance <= 70){
+      threshold = 70;
+
+    }else if (distance <= 250){
+      threshold = 250;
+
+    }else if (distance <= 700){
+      threshold = 700;
+    }
   }
 
   if (threshold == null){
@@ -3281,17 +2902,20 @@ function maybeSpeakTurnInstruction(
     `${index}:${threshold}`;
 
   if (
-    navInstructionAnnouncements
-      .has(key)
+    navInstructionAnnouncements.has(key)
   ){
     return;
   }
 
-  navInstructionAnnouncements
-    .add(key);
+  navInstructionAnnouncements.add(key);
 
   playNavigationChime(
-    threshold <= 70
+    threshold <=
+    (
+      navigationMode === "pedestrian"
+        ? 25
+        : 70
+    )
       ? "urgent"
       : "normal"
   );
@@ -3302,27 +2926,19 @@ function maybeSpeakTurnInstruction(
       threshold
     );
 
-  setTimeout(
-    () => {
-      speakNavigationMessage(
-        message
-      );
-    },
-    330
-  );
+  setTimeout(()=>{
+    speakNavigationMessage(
+      message
+    );
+  },330);
 }
 
-function speakNavigationMessage(
-  message
-){
+function speakNavigationMessage(message){
   if (
     !message ||
     !voiceEnabledByUser ||
     !proximitySettings.voice ||
-    !(
-      "speechSynthesis"
-      in window
-    )
+    !("speechSynthesis" in window)
   ){
     return;
   }
@@ -3352,16 +2968,14 @@ function rememberRecentDestination(
 
   recentDestinations = [
     destination,
-    ...recentDestinations
-      .filter(
-        x =>
-          !sameDestination(
-            x,
-            destination
-          )
-      )
-  ]
-  .slice(0,6);
+    ...recentDestinations.filter(
+      x =>
+        !sameDestination(
+          x,
+          destination
+        )
+    )
+  ].slice(0,6);
 
   saveStoredDestinations(
     "roadpulse_recent",
@@ -3400,21 +3014,19 @@ function toggleFavoriteDestination(
   destination
 ){
   const existingIndex =
-    favoriteDestinations
-      .findIndex(
-        x =>
-          sameDestination(
-            x,
-            destination
-          )
-      );
+    favoriteDestinations.findIndex(
+      x =>
+        sameDestination(
+          x,
+          destination
+        )
+    );
 
   if (existingIndex >= 0){
     favoriteDestinations.splice(
       existingIndex,
       1
     );
-
   }else{
     favoriteDestinations.unshift(
       destination
@@ -3422,8 +3034,7 @@ function toggleFavoriteDestination(
   }
 
   favoriteDestinations =
-    favoriteDestinations
-      .slice(0,10);
+    favoriteDestinations.slice(0,10);
 
   saveStoredDestinations(
     "roadpulse_favorites",
@@ -3439,14 +3050,13 @@ function saveCurrentDestination(){
   }
 
   const saved =
-    favoriteDestinations
-      .some(
-        x =>
-          sameDestination(
-            x,
-            navDestination
-          )
-      );
+    favoriteDestinations.some(
+      x =>
+        sameDestination(
+          x,
+          navDestination
+        )
+    );
 
   toggleFavoriteDestination(
     navDestination
@@ -3466,9 +3076,7 @@ function saveCurrentDestination(){
 
 function renderDestinationQuickList(){
   const box =
-    byId(
-      "destinationQuickList"
-    );
+    byId("destinationQuickList");
 
   if (!box){
     return;
@@ -3479,7 +3087,7 @@ function renderDestinationQuickList(){
   favoriteDestinations
     .slice(0,5)
     .forEach(
-      item => {
+      item=>{
         items.push({
           ...item,
           _kind:"favorite"
@@ -3490,18 +3098,17 @@ function renderDestinationQuickList(){
   recentDestinations
     .filter(
       item =>
-        !favoriteDestinations
-          .some(
-            x =>
-              sameDestination(
-                x,
-                item
-              )
-          )
+        !favoriteDestinations.some(
+          x =>
+            sameDestination(
+              x,
+              item
+            )
+        )
     )
     .slice(0,5)
     .forEach(
-      item => {
+      item=>{
         items.push({
           ...item,
           _kind:"recent"
@@ -3510,50 +3117,35 @@ function renderDestinationQuickList(){
     );
 
   if (items.length === 0){
-    box.classList.add(
-      "hidden"
-    );
-
+    box.classList.add("hidden");
     return;
   }
 
   box.innerHTML =
-    items
-      .map(
-        (item,index) => `
-          <button
-            class="quick-destination-chip ${item._kind === "favorite" ? "favorite" : ""}"
-            onclick="chooseQuickDestination(${index})"
-            title="${esc(item.address || item.name)}">
-
-            ${
-              item._kind === "favorite"
-                ? "★"
-                : "↺"
-            }
-
-            ${esc(item.name)}
-
-          </button>
-        `
-      )
-      .join("");
+    items.map(
+      (item,index)=>`
+        <button
+          class="quick-destination-chip ${item._kind === "favorite" ? "favorite" : ""}"
+          onclick="chooseQuickDestination(${index})"
+          title="${esc(item.address || item.name)}"
+        >
+          ${item._kind === "favorite" ? "★" : "↺"}
+          ${esc(item.name)}
+        </button>
+      `
+    ).join("");
 
   box.dataset.items =
     JSON.stringify(items);
 
-  box.classList.remove(
-    "hidden"
-  );
+  box.classList.remove("hidden");
 }
 
 function chooseQuickDestination(index){
   unlockNavigationAudio();
 
   const box =
-    byId(
-      "destinationQuickList"
-    );
+    byId("destinationQuickList");
 
   if (!box){
     return;
@@ -3564,10 +3156,8 @@ function chooseQuickDestination(index){
   try{
     items =
       JSON.parse(
-        box.dataset.items ||
-        "[]"
+        box.dataset.items || "[]"
       );
-
   }catch(_){}
 
   const item =
@@ -3585,18 +3175,14 @@ function chooseQuickDestination(index){
   };
 
   const input =
-    byId(
-      "destinationSearchInput"
-    );
+    byId("destinationSearchInput");
 
   if (input){
     input.value =
       navDestination.name;
   }
 
-  box.classList.add(
-    "hidden"
-  );
+  box.classList.add("hidden");
 
   byId("clearDestinationBtn")
     ?.classList
@@ -3607,7 +3193,6 @@ function chooseQuickDestination(index){
   );
 
   requestNavigationWakeLock();
-
   startNavigation();
 }
 
@@ -3625,7 +3210,9 @@ function enableRouteFollow(){
         currentPosition.lat,
         currentPosition.lng
       ],
-      17,
+      navigationMode === "pedestrian"
+        ? 18
+        : 17,
       {
         animate:true
       }
@@ -3650,16 +3237,13 @@ function showRouteOverview(){
           maxZoom:16
         }
       );
-
     }catch(_){}
   }
 }
 
 function updateFollowButton(){
   const btn =
-    byId(
-      "followRouteBtn"
-    );
+    byId("followRouteBtn");
 
   if (!btn){
     return;
@@ -3687,10 +3271,7 @@ async function requestNavigationWakeLock(){
   }
 
   if (
-    !(
-      "wakeLock"
-      in navigator
-    ) ||
+    !("wakeLock" in navigator) ||
     document.visibilityState !== "visible"
   ){
     return;
@@ -3699,22 +3280,17 @@ async function requestNavigationWakeLock(){
   try{
     if (!navWakeLock){
       navWakeLock =
-        await navigator
-          .wakeLock
-          .request(
-            "screen"
-          );
-
-      navWakeLock
-        .addEventListener(
-          "release",
-          () => {
-            navWakeLock =
-              null;
-          }
+        await navigator.wakeLock.request(
+          "screen"
         );
-    }
 
+      navWakeLock.addEventListener(
+        "release",
+        ()=>{
+          navWakeLock = null;
+        }
+      );
+    }
   }catch(_){}
 }
 
@@ -3723,11 +3299,9 @@ async function releaseNavigationWakeLock(){
     if (navWakeLock){
       await navWakeLock.release();
     }
-
   }catch(_){}
 
-  navWakeLock =
-    null;
+  navWakeLock = null;
 }
 
 function calculateRemainingRouteMeters(){
@@ -3753,18 +3327,17 @@ function calculateRemainingRouteMeters(){
     const p =
       navRoutePoints[start];
 
-    total +=
-      haversineMeters(
-        currentPosition.lat,
-        currentPosition.lng,
-        p[0],
-        p[1]
-      );
+    total += haversineMeters(
+      currentPosition.lat,
+      currentPosition.lng,
+      p[0],
+      p[1]
+    );
   }
 
   for (
     let i=start;
-    i<navRoutePoints.length - 1;
+    i<navRoutePoints.length-1;
     i++
   ){
     const a =
@@ -3773,18 +3346,16 @@ function calculateRemainingRouteMeters(){
     const b =
       navRoutePoints[i+1];
 
-    total +=
-      haversineMeters(
-        a[0],
-        a[1],
-        b[0],
-        b[1]
-      );
+    total += haversineMeters(
+      a[0],
+      a[1],
+      b[0],
+      b[1]
+    );
   }
 
   return total;
 }
-
 function updateRemainingRouteSummary(){
   if (!navigationActive || !navBaseSummary) return;
 
@@ -3795,39 +3366,26 @@ function updateRemainingRouteSummary(){
 
   const ratio =
     totalMeters > 0
-      ? Math.max(
-          0,
-          Math.min(
-            1,
-            remainingMeters / totalMeters
-          )
-        )
+      ? Math.max(0,Math.min(1,remainingMeters/totalMeters))
       : 1;
 
-  const remainingSeconds =
-    Math.round(
-      totalSeconds * ratio
-    );
-
-  const remainingDelay =
-    Math.round(
-      totalDelay * ratio
-    );
+  const remainingSeconds = Math.round(totalSeconds * ratio);
+  const remainingDelay = Math.round(totalDelay * ratio);
 
   byId("routeDistance").textContent =
-    formatRouteDistance(
-      remainingMeters
-    );
+    formatRouteDistance(remainingMeters);
 
   byId("routeDuration").textContent =
-    formatDuration(
-      remainingSeconds
-    );
+    formatDuration(remainingSeconds);
 
   byId("routeDelay").textContent =
-    remainingDelay > 30
-      ? `+${formatDuration(remainingDelay)}`
-      : "None";
+    navigationMode === "pedestrian"
+      ? "—"
+      : (
+          remainingDelay > 30
+            ? `+${formatDuration(remainingDelay)}`
+            : "None"
+        );
 
   const arrival =
     new Date(
@@ -3848,8 +3406,35 @@ function updateRemainingRouteSummary(){
 function buildProximityTargets(data){
   const targets = [];
 
-  (data.reports || []).forEach(
-    item => {
+  (data.reports || []).forEach(item=>{
+    if (
+      item.lat == null ||
+      item.lng == null
+    ){
+      return;
+    }
+
+    if (
+      item.type === "camera" &&
+      !cameraVoiceAlertsAllowed()
+    ){
+      return;
+    }
+
+    targets.push({
+      id:`report:${item.id}`,
+      type:item.type,
+      lat:Number(item.lat),
+      lng:Number(item.lng),
+      location:
+        item.location ||
+        "Verified community report",
+      source:"community"
+    });
+  });
+
+  if (cameraVoiceAlertsAllowed()){
+    (data.cameras || []).forEach(item=>{
       if (
         item.lat == null ||
         item.lng == null
@@ -3857,48 +3442,17 @@ function buildProximityTargets(data){
         return;
       }
 
-      if (
-        item.type === "camera" &&
-        !cameraVoiceAlertsAllowed()
-      ){
-        return;
-      }
-
       targets.push({
-        id:`report:${item.id}`,
-        type:item.type,
+        id:`camera:${item.id}`,
+        type:"camera",
         lat:Number(item.lat),
         lng:Number(item.lng),
         location:
           item.location ||
-          "Verified community report",
-        source:"community"
+          "Camera",
+        source:"camera"
       });
-    }
-  );
-
-  if (cameraVoiceAlertsAllowed()){
-    (data.cameras || []).forEach(
-      item => {
-        if (
-          item.lat == null ||
-          item.lng == null
-        ){
-          return;
-        }
-
-        targets.push({
-          id:`camera:${item.id}`,
-          type:"camera",
-          lat:Number(item.lat),
-          lng:Number(item.lng),
-          location:
-            item.location ||
-            "Camera",
-          source:"camera"
-        });
-      }
-    );
+    });
   }
 
   return targets;
@@ -3909,8 +3463,7 @@ function cameraVoiceAlertsAllowed(){
     String(
       proximitySettings.defaultCountry ||
       ""
-    )
-    .toUpperCase();
+    ).toUpperCase();
 
   const mode =
     proximitySettings.cameraWarningMode;
@@ -3935,31 +3488,22 @@ function haversineMeters(
 
   const rad =
     d =>
-      d *
-      Math.PI /
-      180;
+      d * Math.PI / 180;
 
-  const p1 =
-    rad(lat1);
-
-  const p2 =
-    rad(lat2);
+  const p1 = rad(lat1);
+  const p2 = rad(lat2);
 
   const dp =
-    rad(
-      lat2 - lat1
-    );
+    rad(lat2-lat1);
 
   const dl =
-    rad(
-      lng2 - lng1
-    );
+    rad(lng2-lng1);
 
   const a =
-    Math.sin(dp / 2) ** 2 +
+    Math.sin(dp/2) ** 2 +
     Math.cos(p1) *
     Math.cos(p2) *
-    Math.sin(dl / 2) ** 2;
+    Math.sin(dl/2) ** 2;
 
   return (
     2 *
@@ -3979,26 +3523,15 @@ function bearingDegrees(
 ){
   const rad =
     d =>
-      d *
-      Math.PI /
-      180;
+      d * Math.PI / 180;
 
   const deg =
     r =>
-      r *
-      180 /
-      Math.PI;
+      r * 180 / Math.PI;
 
-  const p1 =
-    rad(lat1);
-
-  const p2 =
-    rad(lat2);
-
-  const dl =
-    rad(
-      lng2 - lng1
-    );
+  const p1 = rad(lat1);
+  const p2 = rad(lat2);
+  const dl = rad(lng2-lng1);
 
   const y =
     Math.sin(dl) *
@@ -4014,10 +3547,7 @@ function bearingDegrees(
 
   return (
     deg(
-      Math.atan2(
-        y,
-        x
-      )
+      Math.atan2(y,x)
     ) +
     360
   ) % 360;
@@ -4082,9 +3612,7 @@ function evaluateProximityAlerts(){
     !proximitySettings.enabled
   ){
     if (card){
-      card.classList.add(
-        "hidden"
-      );
+      card.classList.add("hidden");
     }
 
     if (nearbyBadge){
@@ -4092,19 +3620,14 @@ function evaluateProximityAlerts(){
         "Nearby: waiting GPS";
     }
 
-    currentProximityTarget =
-      null;
-
+    currentProximityTarget = null;
     return;
   }
 
   let nearest = null;
   const now = Date.now();
 
-  for (
-    const target
-    of proximityTargets
-  ){
+  for (const target of proximityTargets){
     const dismissed =
       dismissedUntil.get(
         target.id
@@ -4148,18 +3671,14 @@ function evaluateProximityAlerts(){
   }
 
   if (!nearest){
-    card.classList.add(
-      "hidden"
-    );
+    card.classList.add("hidden");
 
     if (nearbyBadge){
       nearbyBadge.textContent =
         `Nearby: none < ${Math.round(proximitySettings.maxDistanceM)}m`;
     }
 
-    currentProximityTarget =
-      null;
-
+    currentProximityTarget = null;
     return;
   }
 
@@ -4198,25 +3717,20 @@ function renderProximityAlert(target){
       emoji:"⚠️"
     };
 
-  byId("proximityAlertIcon")
-    .textContent =
-    style.emoji ||
-    "⚠️";
+  byId("proximityAlertIcon").textContent =
+    style.emoji || "⚠️";
 
-  byId("proximityAlertTitle")
-    .textContent =
+  byId("proximityAlertTitle").textContent =
     alertTitleForType(
       target.type
     );
 
-  byId("proximityAlertDistance")
-    .textContent =
+  byId("proximityAlertDistance").textContent =
     formatDistance(
       target.distanceM
     );
 
-  byId("proximityAlertLocation")
-    .textContent =
+  byId("proximityAlertLocation").textContent =
     target.location ||
     "Verified nearby report";
 
@@ -4242,18 +3756,13 @@ function formatDistance(meters){
     return `${
       Math.max(
         10,
-        Math.round(
-          meters / 10
-        ) * 10
+        Math.round(meters/10) * 10
       )
     } m`;
   }
 
   return `${
-    (
-      meters /
-      1000
-    ).toFixed(1)
+    (meters/1000).toFixed(1)
   } km`;
 }
 
@@ -4262,28 +3771,25 @@ function voiceMessageForTarget(target){
     Math.max(
       50,
       Math.round(
-        target.distanceM /
-        50
+        target.distanceM / 50
       ) * 50
     );
 
-  return `${localizedAlertTitle(target.type)} ${localizedInMeters(d)}.`;
+  return (
+    `${localizedAlertTitle(target.type)} ${localizedInMeters(d)}.`
+  );
 }
 
 function maybeSpeakProximityAlert(target){
   if (
     !voiceEnabledByUser ||
     !proximitySettings.voice ||
-    !(
-      "speechSynthesis"
-      in window
-    )
+    !("speechSynthesis" in window)
   ){
     return;
   }
 
-  const now =
-    Date.now();
+  const now = Date.now();
 
   const previous =
     lastAlertedAt.get(
@@ -4309,20 +3815,15 @@ function maybeSpeakProximityAlert(target){
 
   const utterance =
     new SpeechSynthesisUtterance(
-      voiceMessageForTarget(
-        target
-      )
+      voiceMessageForTarget(target)
     );
 
   utterance.lang =
     userLanguage ||
     "en-GB";
 
-  utterance.rate =
-    1.0;
-
-  utterance.pitch =
-    1.0;
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
 
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(
@@ -4343,10 +3844,7 @@ function toggleVoiceAlerts(){
       : "off"
   );
 
-  if (
-    "speechSynthesis"
-    in window
-  ){
+  if ("speechSynthesis" in window){
     window.speechSynthesis.cancel();
 
     if (
@@ -4362,8 +3860,7 @@ function toggleVoiceAlerts(){
         userLanguage ||
         "en-GB";
 
-      u.rate =
-        1.0;
+      u.rate = 1.0;
 
       window.speechSynthesis.speak(
         u
@@ -4412,9 +3909,7 @@ function dismissCurrentAlert(){
 
   byId("proximityAlertCard")
     ?.classList
-    .add(
-      "hidden"
-    );
+    .add("hidden");
 
   currentProximityTarget =
     null;
@@ -4465,7 +3960,6 @@ async function submitReport(type){
     );
 
     startGpsWatch();
-
     return;
   }
 
@@ -4484,10 +3978,8 @@ async function submitReport(type){
         body:
           JSON.stringify({
             type,
-            lat:
-              currentPosition.lat,
-            lng:
-              currentPosition.lng,
+            lat:currentPosition.lat,
+            lng:currentPosition.lng,
             location:
               "User GPS report"
           })
@@ -4496,9 +3988,7 @@ async function submitReport(type){
 
   const data =
     await r.json()
-      .catch(
-        () => ({})
-      );
+      .catch(()=>({}));
 
   if (!r.ok){
     msg.textContent =
@@ -4573,9 +4063,7 @@ async function adminLogin(){
 
   if (!r.ok){
     const msg =
-      byId(
-        "adminLoginMsg"
-      );
+      byId("adminLoginMsg");
 
     msg.textContent =
       "Admin login failed.";
@@ -4591,8 +4079,8 @@ async function adminLogin(){
     return;
   }
 
-  byId("adminPassword")
-    .value = "";
+  byId("adminPassword").value =
+    "";
 
   await loadAdmin();
 }
@@ -4646,20 +4134,16 @@ function renderAdmin(){
   const c =
     adminData.counts;
 
-  byId("statIncidents")
-    .textContent =
+  byId("statIncidents").textContent =
     c.live_incidents;
 
-  byId("statPending")
-    .textContent =
+  byId("statPending").textContent =
     c.pending_reports;
 
-  byId("statCameras")
-    .textContent =
+  byId("statCameras").textContent =
     c.camera_count;
 
-  byId("statUsers")
-    .textContent =
+  byId("statUsers").textContent =
     c.active_users;
 
   renderSettings();
@@ -4720,7 +4204,6 @@ function boolRow(k,v){
     <div class="setting-row">
 
       <div class="meta">
-
         <strong>
           ${esc(
             k.replaceAll(
@@ -4736,7 +4219,6 @@ function boolRow(k,v){
             ""
           )}
         </small>
-
       </div>
 
       <div
@@ -4753,7 +4235,6 @@ function scalarRow(k,v){
     <div class="setting-row">
 
       <div class="meta">
-
         <strong>
           ${esc(
             k.replaceAll(
@@ -4769,7 +4250,6 @@ function scalarRow(k,v){
             ""
           )}
         </small>
-
       </div>
 
       <input
@@ -4796,8 +4276,7 @@ function renderSettings(){
     "proximity_alerts"
   ];
 
-  byId("quickSettings")
-    .innerHTML =
+  byId("quickSettings").innerHTML =
     q.map(
       k =>
         typeof s[k] === "boolean"
@@ -4809,23 +4288,15 @@ function renderSettings(){
               k,
               s[k]
             )
-    )
-    .join("");
+    ).join("");
 
-  byId("allSettings")
-    .innerHTML =
+  byId("allSettings").innerHTML =
     Object.entries(s)
       .map(
         ([k,v]) =>
           typeof v === "boolean"
-            ? boolRow(
-                k,
-                v
-              )
-            : scalarRow(
-                k,
-                v
-              )
+            ? boolRow(k,v)
+            : scalarRow(k,v)
       )
       .join("");
 }
@@ -4851,9 +4322,7 @@ async function updateSetting(k,v){
     );
 
   if (r.ok){
-    adminData.settings[k] =
-      v;
-
+    adminData.settings[k] = v;
     renderSettings();
   }
 }
@@ -4896,7 +4365,8 @@ function renderReports(){
             </td>
 
             <td>
-              <span class="status ${esc(r.status)}">
+              <span
+                class="status ${esc(r.status)}">
                 ${esc(r.status)}
               </span>
             </td>
@@ -4926,8 +4396,7 @@ function renderReports(){
       )
       .join("");
 
-  byId("reportsTable")
-    .innerHTML =
+  byId("reportsTable").innerHTML =
     `
       <table>
 
@@ -5041,8 +4510,7 @@ function renderCameras(){
       )
       .join("");
 
-  byId("cameraTable")
-    .innerHTML =
+  byId("cameraTable").innerHTML =
     `
       <table>
 
@@ -5179,8 +4647,7 @@ function renderUsers(){
     )
     .join("");
 
-  byId("usersTable")
-    .innerHTML =
+  byId("usersTable").innerHTML =
     `
       <table>
 
@@ -5221,8 +4688,7 @@ function renderUsers(){
     )
     .join("");
 
-  byId("appUsersTable")
-    .innerHTML =
+  byId("appUsersTable").innerHTML =
     `
       <table>
 
@@ -5248,10 +4714,10 @@ function renderUsers(){
 document
   .querySelectorAll(".nav")
   .forEach(
-    btn => {
+    btn=>{
       btn.addEventListener(
         "click",
-        () => {
+        ()=>{
           document
             .querySelectorAll(".nav")
             .forEach(
@@ -5274,24 +4740,31 @@ document
                 )
             );
 
-          byId(
-            btn.dataset.tab +
-            "Tab"
-          )
-          .classList
-          .remove(
-            "hidden"
-          );
+          const tab =
+            byId(
+              btn.dataset.tab +
+              "Tab"
+            );
 
-          byId("pageTitle")
-            .textContent =
-            btn.textContent;
+          if (tab){
+            tab.classList.remove(
+              "hidden"
+            );
+          }
+
+          const pageTitle =
+            byId("pageTitle");
+
+          if (pageTitle){
+            pageTitle.textContent =
+              btn.textContent;
+          }
         }
       );
     }
   );
 
-/* Explicit browser globals for inline HTML handlers */
+/* Explicit browser globals for inline HTML handlers. */
 
 window.userLogin =
   userLogin;
@@ -5350,6 +4823,9 @@ window.clearDestinationSearch =
 window.changeAppLanguage =
   changeAppLanguage;
 
+window.setNavigationMode =
+  setNavigationMode;
+
 window.dismissCurrentAlert =
   dismissCurrentAlert;
 
@@ -5367,3 +4843,24 @@ window.showRouteOverview =
 
 window.saveCurrentDestination =
   saveCurrentDestination;
+
+window.setReportStatus =
+  setReportStatus;
+
+window.updateSetting =
+  updateSetting;
+
+window.addCamera =
+  addCamera;
+
+window.deleteCamera =
+  deleteCamera;
+
+window.chooseDestinationResult =
+  chooseDestinationResult;
+
+window.toggleFavoriteSearchResult =
+  toggleFavoriteSearchResult;
+
+window.chooseQuickDestination =
+  chooseQuickDestination;
