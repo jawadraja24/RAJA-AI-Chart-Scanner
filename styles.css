@@ -673,3 +673,64 @@ th{color:var(--muted)}
     gap:5px;
   }
 }
+
+
+/* Web V1.2 driving + pedestrian navigation */
+.nav-mode-switch{
+  display:flex;
+  gap:7px;
+  width:max-content;
+  margin:7px auto 0;
+  padding:5px;
+  background:rgba(255,255,255,.97);
+  border:1px solid var(--line);
+  border-radius:999px;
+  box-shadow:0 8px 22px rgba(16,35,31,.12);
+}
+.nav-mode-btn{
+  min-width:104px;
+  padding:8px 14px;
+  border-radius:999px;
+  background:transparent;
+  color:#55625e;
+  font-size:12px;
+  font-weight:800;
+}
+.nav-mode-btn.active{
+  background:#0f7c4b;
+  color:#fff;
+  box-shadow:0 5px 14px rgba(15,124,75,.22);
+}
+.destination-result-main strong{
+  font-size:14px;
+  line-height:1.25;
+}
+.destination-result-main small{
+  margin-top:3px;
+}
+.route-summary-card.walking-mode{
+  grid-template-columns:repeat(3,1fr) !important;
+}
+.route-summary-card.walking-mode #routeTrafficDelayItem{
+  display:none;
+}
+body.walking-navigation .nav-maneuver-icon{
+  background:#0f9f61;
+}
+body.walking-navigation .speed-pill{
+  opacity:.72;
+}
+@media(max-width:700px){
+  .nav-mode-switch{
+    margin-top:5px;
+    padding:4px;
+  }
+  .nav-mode-btn{
+    min-width:92px;
+    padding:7px 11px;
+    font-size:11px;
+  }
+  .route-summary-card.walking-mode{
+    grid-template-columns:repeat(3,1fr) !important;
+  }
+}
