@@ -11,224 +11,513 @@ let trafficIncidentLayer = null;
 let trafficEnabledByUser = true;
 let trafficConfigured = false;
 let trafficRefreshTimer = null;
+let proximityTargets = [];
+
+let proximitySettings = {
+  enabled: true,
+  voice: true,
+  maxDistanceM: 1200,
+  urgentDistanceM: 400,
+  cooldownS: 300,
+  language: "en-GB",
+  defaultCountry: "DE",
+  cameraWarningMode: "country_compliance"
+};
+
+let voiceEnabledByUser =
+  localStorage.getItem("roadpulse_voice") !== "off";
+
+let lastAlertedAt = new Map();
+let dismissedUntil = new Map();
+let currentProximityTarget = null;
+let proximityEvalTimer = null;
 let adminData = null;
 
-const byId = (id) => document.getElementById(id);
+const byId = (id) =>
+  document.getElementById(id);
 
-function showOnly(id){
-  ["userAuthView","userAppView","adminLoginView","adminView"].forEach(x=>{
+function showOnly(id) {
+  [
+    "userAuthView",
+    "userAppView",
+    "adminLoginView",
+    "adminView"
+  ].forEach(x => {
     const el = byId(x);
-    if (el) el.classList.toggle("hidden", x !== id);
+
+    if (el) {
+      el.classList.toggle(
+        "hidden",
+        x !== id
+      );
+    }
   });
 }
 
-async function routeByHash(){
-  if (location.hash.toLowerCase() === "#admin"){
+async function routeByHash() {
+
+  if (
+    location.hash.toLowerCase()
+    === "#admin"
+  ) {
     stopGpsWatch();
     showOnly("adminLoginView");
     return;
   }
 
-  try{
-    const r = await fetch("/api/auth/me", {credentials:"include"});
-    if (r.ok){
-      const data = await r.json();
-      currentUser = data.user;
+  try {
+
+    const r = await fetch(
+      "/api/auth/me",
+      {
+        credentials: "include"
+      }
+    );
+
+    if (r.ok) {
+
+      const data =
+        await r.json();
+
+      currentUser =
+        data.user;
+
       await openUserApp();
+
       return;
     }
-  }catch(_){}
+
+  } catch (_) {}
 
   stopGpsWatch();
+
   showOnly("userAuthView");
 }
 
-window.addEventListener("hashchange", routeByHash);
-window.addEventListener("load", routeByHash);
+window.addEventListener(
+  "hashchange",
+  routeByHash
+);
 
-function showAuthTab(tab){
-  byId("loginForm").classList.toggle("hidden", tab !== "login");
-  byId("registerForm").classList.toggle("hidden", tab !== "register");
-  byId("loginTabBtn").classList.toggle("active", tab === "login");
-  byId("registerTabBtn").classList.toggle("active", tab === "register");
+window.addEventListener(
+  "load",
+  routeByHash
+);
+
+function showAuthTab(tab) {
+
+  byId("loginForm")
+    .classList
+    .toggle(
+      "hidden",
+      tab !== "login"
+    );
+
+  byId("registerForm")
+    .classList
+    .toggle(
+      "hidden",
+      tab !== "register"
+    );
+
+  byId("loginTabBtn")
+    .classList
+    .toggle(
+      "active",
+      tab === "login"
+    );
+
+  byId("registerTabBtn")
+    .classList
+    .toggle(
+      "active",
+      tab === "register"
+    );
+
   setUserAuthMessage("");
 }
 
-function setUserAuthMessage(message, isError=false){
-  const el = byId("userAuthMsg");
-  if (!message){
+function setUserAuthMessage(
+  message,
+  isError = false
+) {
+
+  const el =
+    byId("userAuthMsg");
+
+  if (!message) {
+
     el.classList.add("hidden");
+
     return;
   }
+
   el.textContent = message;
+
   el.classList.remove("hidden");
-  el.classList.toggle("error", isError);
+
+  el.classList.toggle(
+    "error",
+    isError
+  );
 }
 
-async function userRegister(){
+async function userRegister() {
+
   setUserAuthMessage("");
+
   const payload = {
-    name: byId("registerName").value.trim(),
-    email: byId("registerEmail").value.trim(),
-    password: byId("registerPassword").value
+
+    name:
+      byId("registerName")
+        .value
+        .trim(),
+
+    email:
+      byId("registerEmail")
+        .value
+        .trim(),
+
+    password:
+      byId("registerPassword")
+        .value
   };
-  const r = await fetch("/api/auth/register", {
-    method:"POST", credentials:"include",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(payload)
-  });
-  const data = await r.json().catch(()=>({}));
-  if (!r.ok){
-    setUserAuthMessage(data.detail || "Could not create account.", true);
+
+  const r = await fetch(
+    "/api/auth/register",
+    {
+      method: "POST",
+
+      credentials: "include",
+
+      headers: {
+        "Content-Type":
+          "application/json"
+      },
+
+      body:
+        JSON.stringify(payload)
+    }
+  );
+
+  const data =
+    await r
+      .json()
+      .catch(() => ({}));
+
+  if (!r.ok) {
+
+    setUserAuthMessage(
+      data.detail ||
+      "Could not create account.",
+      true
+    );
+
     return;
   }
-  currentUser = data.user;
+
+  currentUser =
+    data.user;
+
   await openUserApp();
 }
 
-async function userLogin(){
+async function userLogin() {
+
   setUserAuthMessage("");
+
   const payload = {
-    email: byId("loginEmail").value.trim(),
-    password: byId("loginPassword").value
+
+    email:
+      byId("loginEmail")
+        .value
+        .trim(),
+
+    password:
+      byId("loginPassword")
+        .value
   };
-  const r = await fetch("/api/auth/login", {
-    method:"POST", credentials:"include",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(payload)
-  });
-  const data = await r.json().catch(()=>({}));
-  if (!r.ok){
-    setUserAuthMessage(data.detail || "Login failed.", true);
+
+  const r = await fetch(
+    "/api/auth/login",
+    {
+      method: "POST",
+
+      credentials: "include",
+
+      headers: {
+        "Content-Type":
+          "application/json"
+      },
+
+      body:
+        JSON.stringify(payload)
+    }
+  );
+
+  const data =
+    await r
+      .json()
+      .catch(() => ({}));
+
+  if (!r.ok) {
+
+    setUserAuthMessage(
+      data.detail ||
+      "Login failed.",
+      true
+    );
+
     return;
   }
-  currentUser = data.user;
+
+  currentUser =
+    data.user;
+
   await openUserApp();
 }
 
-async function userLogout(){
+async function userLogout() {
+
   stopGpsWatch();
 
-  if (map && trafficFlowLayer && map.hasLayer(trafficFlowLayer)) {
-    map.removeLayer(trafficFlowLayer);
+  if (proximityEvalTimer) {
+
+    clearInterval(
+      proximityEvalTimer
+    );
+
+    proximityEvalTimer = null;
   }
 
-  if (map && trafficIncidentLayer && map.hasLayer(trafficIncidentLayer)) {
-    map.removeLayer(trafficIncidentLayer);
+  if (
+    map &&
+    trafficFlowLayer &&
+    map.hasLayer(
+      trafficFlowLayer
+    )
+  ) {
+    map.removeLayer(
+      trafficFlowLayer
+    );
   }
 
-  await fetch("/api/auth/logout", {
-    method:"POST",
-    credentials:"include"
-  });
+  if (
+    map &&
+    trafficIncidentLayer &&
+    map.hasLayer(
+      trafficIncidentLayer
+    )
+  ) {
+    map.removeLayer(
+      trafficIncidentLayer
+    );
+  }
+
+  await fetch(
+    "/api/auth/logout",
+    {
+      method: "POST",
+      credentials: "include"
+    }
+  );
 
   currentUser = null;
+
   location.hash = "";
+
   showOnly("userAuthView");
 }
 
-async function openUserApp(){
+async function openUserApp() {
+
   showOnly("userAppView");
 
-  byId("userGreeting").textContent =
-    currentUser ? `Hi ${currentUser.name}` : "Live map";
+  byId("userGreeting")
+    .textContent =
+    currentUser
+      ? `Hi ${currentUser.name}`
+      : "Live map";
 
   ensureMap();
+
   await refreshMapData();
+
   startGpsWatch();
 
-  setTimeout(()=>{
-    if (map) map.invalidateSize();
+  setTimeout(() => {
+
+    if (map) {
+      map.invalidateSize();
+    }
+
   }, 50);
+
+  if (!proximityEvalTimer) {
+
+    proximityEvalTimer =
+      setInterval(() => {
+
+        evaluateProximityAlerts();
+
+      }, 2000);
+  }
 }
 
-function ensureMap(){
+function ensureMap() {
+
   if (map) return;
 
-  map = L.map("map", {
-    zoomControl:true
-  }).setView([53.5511, 9.9937], 12);
+  map = L.map(
+    "map",
+    {
+      zoomControl: true
+    }
+  ).setView(
+    [
+      53.5511,
+      9.9937
+    ],
+    12
+  );
 
   L.tileLayer(
     "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
     {
-      maxZoom:19,
-      attribution:'&copy; OpenStreetMap contributors'
+      maxZoom: 19,
+
+      attribution:
+        "&copy; OpenStreetMap contributors"
     }
   ).addTo(map);
 
-  incidentLayer = L.layerGroup().addTo(map);
-  cameraLayer = L.layerGroup().addTo(map);
+  incidentLayer =
+    L.layerGroup()
+      .addTo(map);
 
-  trafficFlowLayer = L.tileLayer(
-    "/api/traffic/flow/{z}/{x}/{y}",
-    {
-      tileSize:256,
-      opacity:.88,
-      zIndex:250,
-      maxZoom:22,
-      updateWhenIdle:false,
-      keepBuffer:3
-    }
-  );
+  cameraLayer =
+    L.layerGroup()
+      .addTo(map);
 
-  trafficIncidentLayer = L.tileLayer(
-    "/api/traffic/incidents/{z}/{x}/{y}",
-    {
-      tileSize:256,
-      opacity:.92,
-      zIndex:260,
-      maxZoom:22,
-      updateWhenIdle:false,
-      keepBuffer:3
-    }
-  );
-
-  if (!trafficRefreshTimer){
-    trafficRefreshTimer = setInterval(()=>{
-      if (trafficConfigured && trafficEnabledByUser){
-        if (trafficFlowLayer) trafficFlowLayer.redraw();
-        if (trafficIncidentLayer) trafficIncidentLayer.redraw();
+  trafficFlowLayer =
+    L.tileLayer(
+      "/api/traffic/flow/{z}/{x}/{y}",
+      {
+        tileSize: 256,
+        opacity: .88,
+        zIndex: 250,
+        maxZoom: 22,
+        updateWhenIdle: false,
+        keepBuffer: 3
       }
-    }, 60000);
+    );
+
+  trafficIncidentLayer =
+    L.tileLayer(
+      "/api/traffic/incidents/{z}/{x}/{y}",
+      {
+        tileSize: 256,
+        opacity: .92,
+        zIndex: 260,
+        maxZoom: 22,
+        updateWhenIdle: false,
+        keepBuffer: 3
+      }
+    );
+
+  if (!trafficRefreshTimer) {
+
+    trafficRefreshTimer =
+      setInterval(() => {
+
+        if (
+          trafficConfigured &&
+          trafficEnabledByUser
+        ) {
+
+          if (trafficFlowLayer) {
+            trafficFlowLayer.redraw();
+          }
+
+          if (trafficIncidentLayer) {
+            trafficIncidentLayer.redraw();
+          }
+        }
+
+      }, 60000);
   }
 }
 
-function startGpsWatch(){
-  if (!navigator.geolocation){
-    setGpsBadge("GPS not supported", false);
+function startGpsWatch() {
+
+  if (!navigator.geolocation) {
+
+    setGpsBadge(
+      "GPS not supported",
+      false
+    );
+
     return;
   }
 
-  if (watchId !== null) return;
+  if (watchId !== null) {
+    return;
+  }
 
-  setGpsBadge("Requesting GPS…", false);
-
-  watchId = navigator.geolocation.watchPosition(
-    onGpsPosition,
-    onGpsError,
-    {
-      enableHighAccuracy:true,
-      maximumAge:5000,
-      timeout:15000
-    }
+  setGpsBadge(
+    "Requesting GPS…",
+    false
   );
+
+  watchId =
+    navigator
+      .geolocation
+      .watchPosition(
+        onGpsPosition,
+        onGpsError,
+        {
+          enableHighAccuracy: true,
+          maximumAge: 5000,
+          timeout: 15000
+        }
+      );
 }
 
-function stopGpsWatch(){
-  if (watchId !== null && navigator.geolocation){
-    navigator.geolocation.clearWatch(watchId);
+function stopGpsWatch() {
+
+  if (
+    watchId !== null &&
+    navigator.geolocation
+  ) {
+
+    navigator
+      .geolocation
+      .clearWatch(
+        watchId
+      );
   }
 
   watchId = null;
 }
 
-function onGpsPosition(pos){
+function onGpsPosition(pos) {
+
   currentPosition = {
-    lat: pos.coords.latitude,
-    lng: pos.coords.longitude,
-    accuracy: pos.coords.accuracy,
-    speed: pos.coords.speed
+
+    lat:
+      pos.coords.latitude,
+
+    lng:
+      pos.coords.longitude,
+
+    accuracy:
+      pos.coords.accuracy,
+
+    speed:
+      pos.coords.speed,
+
+    heading:
+      pos.coords.heading
   };
 
   const latlng = [
@@ -236,82 +525,155 @@ function onGpsPosition(pos){
     currentPosition.lng
   ];
 
-  if (!userMarker){
-    userMarker = L.circleMarker(
-      latlng,
-      {
-        radius:9,
-        color:"#ffffff",
-        weight:3,
-        fillColor:"#2d70d6",
-        fillOpacity:1
-      }
-    )
-    .addTo(map)
-    .bindPopup("<strong>Your live GPS location</strong>");
-  }else{
-    userMarker.setLatLng(latlng);
+  if (!userMarker) {
+
+    userMarker =
+      L.circleMarker(
+        latlng,
+        {
+          radius: 9,
+          color: "#ffffff",
+          weight: 3,
+          fillColor: "#2d70d6",
+          fillOpacity: 1
+        }
+      )
+      .addTo(map)
+      .bindPopup(
+        "<strong>Your live GPS location</strong>"
+      );
+
+  } else {
+
+    userMarker
+      .setLatLng(
+        latlng
+      );
   }
 
-  if (!userAccuracyCircle){
-    userAccuracyCircle = L.circle(
-      latlng,
-      {
-        radius:currentPosition.accuracy,
-        color:"#2d70d6",
-        weight:1,
-        fillOpacity:.08
-      }
-    ).addTo(map);
-  }else{
-    userAccuracyCircle.setLatLng(latlng);
-    userAccuracyCircle.setRadius(currentPosition.accuracy);
+  if (!userAccuracyCircle) {
+
+    userAccuracyCircle =
+      L.circle(
+        latlng,
+        {
+          radius:
+            currentPosition.accuracy,
+
+          color:
+            "#2d70d6",
+
+          weight: 1,
+
+          fillOpacity: .08
+        }
+      )
+      .addTo(map);
+
+  } else {
+
+    userAccuracyCircle
+      .setLatLng(
+        latlng
+      );
+
+    userAccuracyCircle
+      .setRadius(
+        currentPosition.accuracy
+      );
   }
 
-  if (!map.__centeredOnUser){
-    map.setView(latlng, 15);
-    map.__centeredOnUser = true;
+  if (!map.__centeredOnUser) {
+
+    map.setView(
+      latlng,
+      15
+    );
+
+    map.__centeredOnUser =
+      true;
   }
 
   const speedKmh =
     currentPosition.speed != null &&
     currentPosition.speed >= 0
-      ? Math.round(currentPosition.speed * 3.6)
+
+      ? Math.round(
+          currentPosition.speed
+          * 3.6
+        )
+
       : null;
 
   setGpsBadge(
-    speedKmh === null
-      ? `GPS live · ±${Math.round(currentPosition.accuracy)}m`
-      : `GPS live · ${speedKmh} km/h`,
+    `GPS live · ±${Math.round(currentPosition.accuracy)}m`,
     true
   );
+
+  const speedBadge =
+    byId("speedBadge");
+
+  if (speedBadge) {
+
+    speedBadge.textContent =
+      `${speedKmh ?? 0} km/h`;
+  }
+
+  evaluateProximityAlerts();
 }
 
-function onGpsError(err){
+function onGpsError(err) {
+
   const messages = {
-    1:"Location permission denied",
-    2:"GPS position unavailable",
-    3:"GPS request timed out"
+
+    1:
+      "Location permission denied",
+
+    2:
+      "GPS position unavailable",
+
+    3:
+      "GPS request timed out"
   };
 
   setGpsBadge(
-    messages[err.code] || "GPS error",
+    messages[err.code]
+    || "GPS error",
     false
   );
 }
 
-function setGpsBadge(text, good){
-  const el = byId("gpsBadge");
+function setGpsBadge(
+  text,
+  good
+) {
+
+  const el =
+    byId("gpsBadge");
 
   if (!el) return;
 
-  el.textContent = text;
-  el.classList.toggle("good", !!good);
-  el.classList.toggle("warning", !good);
+  el.textContent =
+    text;
+
+  el.classList.toggle(
+    "good",
+    !!good
+  );
+
+  el.classList.toggle(
+    "warning",
+    !good
+  );
 }
 
-function centerOnUser(){
-  if (map && currentPosition){
+function centerOnUser() {
+
+  if (
+    map &&
+    currentPosition
+  ) {
+
     map.setView(
       [
         currentPosition.lat,
@@ -320,149 +682,253 @@ function centerOnUser(){
       16
     );
 
-    if (userMarker){
+    if (userMarker) {
       userMarker.openPopup();
     }
-  }else{
+
+  } else {
+
     startGpsWatch();
-    setGpsBadge("Waiting for GPS…", false);
+
+    setGpsBadge(
+      "Waiting for GPS…",
+      false
+    );
   }
 }
 
 const reportStyle = {
+
   camera: {
-    color:"#2d70d6",
-    emoji:"📷"
+    color:
+      "#2d70d6",
+    emoji:
+      "📷"
   },
 
   police: {
-    color:"#3159b8",
-    emoji:"🚓"
+    color:
+      "#3159b8",
+    emoji:
+      "🚓"
   },
 
   accident: {
-    color:"#d63b32",
-    emoji:"🚗"
+    color:
+      "#d63b32",
+    emoji:
+      "🚗"
   },
 
   hazard: {
-    color:"#e09b18",
-    emoji:"⚠️"
+    color:
+      "#e09b18",
+    emoji:
+      "⚠️"
   },
 
   roadwork: {
-    color:"#d97818",
-    emoji:"🚧"
+    color:
+      "#d97818",
+    emoji:
+      "🚧"
   },
 
   traffic: {
-    color:"#17a65b",
-    emoji:"🚦"
+    color:
+      "#17a65b",
+    emoji:
+      "🚦"
   }
 };
 
-async function refreshMapData(){
+async function refreshMapData() {
+
   if (!map) return;
 
-  const r = await fetch(
-    "/api/map-data",
-    {
-      credentials:"include"
-    }
-  );
+  const r =
+    await fetch(
+      "/api/map-data",
+      {
+        credentials:
+          "include"
+      }
+    );
 
-  if (r.status === 401){
+  if (r.status === 401) {
+
     await userLogout();
+
     return;
   }
 
-  if (!r.ok) return;
+  if (!r.ok) {
+    return;
+  }
 
-  const data = await r.json();
+  const data =
+    await r.json();
 
-  incidentLayer.clearLayers();
-  cameraLayer.clearLayers();
+  incidentLayer
+    .clearLayers();
 
-  data.reports.forEach(item=>{
-    const style =
-      reportStyle[item.type] ||
-      {
-        color:"#666",
-        emoji:"•"
-      };
+  cameraLayer
+    .clearLayers();
 
-    const marker = L.circleMarker(
-      [
-        item.lat,
-        item.lng
-      ],
-      {
-        radius:9,
-        color:"#fff",
-        weight:2,
-        fillColor:style.color,
-        fillOpacity:.95
-      }
-    );
+  data.reports
+    .forEach(item => {
 
-    marker.bindPopup(`
-      <div class="popup-title">
-        ${style.emoji} ${esc(item.type)}
-      </div>
+      const style =
+        reportStyle[item.type]
+        || {
+          color: "#666",
+          emoji: "•"
+        };
 
-      <div>
-        ${esc(item.location || "Reported location")}
-      </div>
+      const marker =
+        L.circleMarker(
+          [
+            item.lat,
+            item.lng
+          ],
+          {
+            radius: 9,
+            color: "#fff",
+            weight: 2,
+            fillColor:
+              style.color,
+            fillOpacity: .95
+          }
+        );
 
-      <div class="popup-meta">
-        Community verified
-      </div>
-    `);
+      marker.bindPopup(`
+        <div class="popup-title">
+          ${style.emoji}
+          ${esc(item.type)}
+        </div>
 
-    marker.addTo(incidentLayer);
-  });
+        <div>
+          ${esc(
+            item.location
+            || "Reported location"
+          )}
+        </div>
 
-  data.cameras.forEach(item=>{
-    const marker = L.marker(
-      [
-        item.lat,
-        item.lng
-      ],
-      {
-        title:`Camera: ${item.location}`
-      }
-    );
+        <div class="popup-meta">
+          Community verified
+        </div>
+      `);
 
-    const limit =
-      item.speed_limit
-        ? `${item.speed_limit} km/h`
-        : "Speed unknown";
+      marker.addTo(
+        incidentLayer
+      );
+    });
 
-    marker.bindPopup(`
-      <div class="popup-title">
-        📷 ${esc(item.camera_type)} camera
-      </div>
+  data.cameras
+    .forEach(item => {
 
-      <div>
-        ${esc(item.location)}
-      </div>
+      const marker =
+        L.marker(
+          [
+            item.lat,
+            item.lng
+          ],
+          {
+            title:
+              `Camera: ${item.location}`
+          }
+        );
 
-      <div class="popup-meta">
-        ${esc(limit)} · confidence ${esc(item.confidence)}%
-      </div>
-    `);
+      const limit =
+        item.speed_limit
 
-    marker.addTo(cameraLayer);
-  });
+          ? `${item.speed_limit} km/h`
 
-  byId("incidentBadge").textContent =
+          : "Speed unknown";
+
+      marker.bindPopup(`
+        <div class="popup-title">
+          📷 ${esc(item.camera_type)} camera
+        </div>
+
+        <div>
+          ${esc(item.location)}
+        </div>
+
+        <div class="popup-meta">
+          ${esc(limit)}
+          · confidence
+          ${esc(item.confidence)}%
+        </div>
+      `);
+
+      marker.addTo(
+        cameraLayer
+      );
+    });
+
+  byId("incidentBadge")
+    .textContent =
     `${data.reports.length} verified reports`;
 
+  proximitySettings = {
+
+    enabled:
+      data.settings.proximity_alerts
+      !== false,
+
+    voice:
+      data.settings.voice_alerts
+      !== false,
+
+    maxDistanceM:
+      Number(
+        data.settings.alert_distance_m
+        || 1200
+      ),
+
+    urgentDistanceM:
+      Number(
+        data.settings.urgent_alert_distance_m
+        || 400
+      ),
+
+    cooldownS:
+      Number(
+        data.settings.alert_repeat_cooldown_s
+        || 300
+      ),
+
+    language:
+      data.settings.voice_language
+      || "en-GB",
+
+    defaultCountry:
+      data.settings.default_country
+      || "DE",
+
+    cameraWarningMode:
+      data.settings.camera_warning_mode
+      || "country_compliance"
+  };
+
+  proximityTargets =
+    buildProximityTargets(
+      data
+    );
+
+  updateVoiceBadge();
+
+  evaluateProximityAlerts();
+
   trafficConfigured =
-    !!data.settings.traffic_available;
+    !!data.settings
+      .traffic_available;
 
   const adminTrafficEnabled =
-    data.settings.traffic_layer !== false;
+    data.settings
+      .traffic_layer
+    !== false;
 
   applyTrafficLayerState(
     adminTrafficEnabled
@@ -470,27 +936,44 @@ async function refreshMapData(){
 }
 
 function applyTrafficLayerState(
-  adminTrafficEnabled=true
-){
-  const badge = byId("trafficBadge");
-  const legend = byId("trafficLegend");
+  adminTrafficEnabled = true
+) {
 
-  if (!badge || !map) return;
+  const badge =
+    byId("trafficBadge");
 
-  if (!trafficConfigured){
+  const legend =
+    byId("trafficLegend");
+
+  if (
+    !badge ||
+    !map
+  ) {
+    return;
+  }
+
+  if (!trafficConfigured) {
 
     if (
       trafficFlowLayer &&
-      map.hasLayer(trafficFlowLayer)
-    ){
-      map.removeLayer(trafficFlowLayer);
+      map.hasLayer(
+        trafficFlowLayer
+      )
+    ) {
+      map.removeLayer(
+        trafficFlowLayer
+      );
     }
 
     if (
       trafficIncidentLayer &&
-      map.hasLayer(trafficIncidentLayer)
-    ){
-      map.removeLayer(trafficIncidentLayer);
+      map.hasLayer(
+        trafficIncidentLayer
+      )
+    ) {
+      map.removeLayer(
+        trafficIncidentLayer
+      );
     }
 
     badge.textContent =
@@ -501,29 +984,41 @@ function applyTrafficLayerState(
       "off"
     );
 
-    badge.classList.add("error");
+    badge.classList.add(
+      "error"
+    );
 
-    if (legend){
-      legend.classList.add("hidden");
+    if (legend) {
+      legend.classList.add(
+        "hidden"
+      );
     }
 
     return;
   }
 
-  if (!adminTrafficEnabled){
+  if (!adminTrafficEnabled) {
 
     if (
       trafficFlowLayer &&
-      map.hasLayer(trafficFlowLayer)
-    ){
-      map.removeLayer(trafficFlowLayer);
+      map.hasLayer(
+        trafficFlowLayer
+      )
+    ) {
+      map.removeLayer(
+        trafficFlowLayer
+      );
     }
 
     if (
       trafficIncidentLayer &&
-      map.hasLayer(trafficIncidentLayer)
-    ){
-      map.removeLayer(trafficIncidentLayer);
+      map.hasLayer(
+        trafficIncidentLayer
+      )
+    ) {
+      map.removeLayer(
+        trafficIncidentLayer
+      );
     }
 
     badge.textContent =
@@ -534,29 +1029,39 @@ function applyTrafficLayerState(
       "error"
     );
 
-    badge.classList.add("off");
+    badge.classList.add(
+      "off"
+    );
 
-    if (legend){
-      legend.classList.add("hidden");
+    if (legend) {
+      legend.classList.add(
+        "hidden"
+      );
     }
 
     return;
   }
 
-  if (trafficEnabledByUser){
+  if (trafficEnabledByUser) {
 
     if (
       trafficFlowLayer &&
-      !map.hasLayer(trafficFlowLayer)
-    ){
-      trafficFlowLayer.addTo(map);
+      !map.hasLayer(
+        trafficFlowLayer
+      )
+    ) {
+      trafficFlowLayer
+        .addTo(map);
     }
 
     if (
       trafficIncidentLayer &&
-      !map.hasLayer(trafficIncidentLayer)
-    ){
-      trafficIncidentLayer.addTo(map);
+      !map.hasLayer(
+        trafficIncidentLayer
+      )
+    ) {
+      trafficIncidentLayer
+        .addTo(map);
     }
 
     badge.textContent =
@@ -567,26 +1072,38 @@ function applyTrafficLayerState(
       "error"
     );
 
-    badge.classList.add("on");
+    badge.classList.add(
+      "on"
+    );
 
-    if (legend){
-      legend.classList.remove("hidden");
+    if (legend) {
+      legend.classList.remove(
+        "hidden"
+      );
     }
 
-  }else{
+  } else {
 
     if (
       trafficFlowLayer &&
-      map.hasLayer(trafficFlowLayer)
-    ){
-      map.removeLayer(trafficFlowLayer);
+      map.hasLayer(
+        trafficFlowLayer
+      )
+    ) {
+      map.removeLayer(
+        trafficFlowLayer
+      );
     }
 
     if (
       trafficIncidentLayer &&
-      map.hasLayer(trafficIncidentLayer)
-    ){
-      map.removeLayer(trafficIncidentLayer);
+      map.hasLayer(
+        trafficIncidentLayer
+      )
+    ) {
+      map.removeLayer(
+        trafficIncidentLayer
+      );
     }
 
     badge.textContent =
@@ -597,65 +1114,830 @@ function applyTrafficLayerState(
       "error"
     );
 
-    badge.classList.add("off");
+    badge.classList.add(
+      "off"
+    );
 
-    if (legend){
-      legend.classList.add("hidden");
+    if (legend) {
+      legend.classList.add(
+        "hidden"
+      );
     }
   }
 }
 
-function toggleTrafficLayer(){
-  if (!trafficConfigured){
-    applyTrafficLayerState(true);
+function toggleTrafficLayer() {
+
+  if (!trafficConfigured) {
+
+    applyTrafficLayerState(
+      true
+    );
+
     return;
   }
 
   trafficEnabledByUser =
     !trafficEnabledByUser;
 
-  applyTrafficLayerState(true);
+  applyTrafficLayerState(
+    true
+  );
 }
 
-async function refreshAllLiveData(){
+async function refreshAllLiveData() {
+
   await refreshMapData();
 
   if (
     trafficConfigured &&
     trafficEnabledByUser
-  ){
-    if (trafficFlowLayer){
+  ) {
+
+    if (trafficFlowLayer) {
       trafficFlowLayer.redraw();
     }
 
-    if (trafficIncidentLayer){
+    if (trafficIncidentLayer) {
       trafficIncidentLayer.redraw();
     }
   }
 }
 
-function openReportSheet(){
-  const el = byId("reportSheet");
+function buildProximityTargets(
+  data
+) {
 
-  el.classList.remove("hidden");
+  const targets = [];
 
-  byId("reportMsg")
-    .classList
-    .add("hidden");
+  (
+    data.reports
+    || []
+  ).forEach(item => {
+
+    if (
+      item.lat == null ||
+      item.lng == null
+    ) {
+      return;
+    }
+
+    if (
+      item.type === "camera" &&
+      !cameraVoiceAlertsAllowed()
+    ) {
+      return;
+    }
+
+    targets.push({
+
+      id:
+        `report:${item.id}`,
+
+      type:
+        item.type,
+
+      lat:
+        Number(item.lat),
+
+      lng:
+        Number(item.lng),
+
+      location:
+        item.location
+        || "Verified community report",
+
+      source:
+        "community"
+    });
+  });
+
+  if (
+    cameraVoiceAlertsAllowed()
+  ) {
+
+    (
+      data.cameras
+      || []
+    ).forEach(item => {
+
+      if (
+        item.lat == null ||
+        item.lng == null
+      ) {
+        return;
+      }
+
+      targets.push({
+
+        id:
+          `camera:${item.id}`,
+
+        type:
+          "camera",
+
+        lat:
+          Number(item.lat),
+
+        lng:
+          Number(item.lng),
+
+        location:
+          item.location
+          || "Camera",
+
+        source:
+          "camera"
+      });
+    });
+  }
+
+  return targets;
 }
 
-function closeReportSheet(){
-  byId("reportSheet")
-    .classList
-    .add("hidden");
+function cameraVoiceAlertsAllowed() {
+
+  const country =
+    String(
+      proximitySettings
+        .defaultCountry
+      || ""
+    ).toUpperCase();
+
+  const mode =
+    proximitySettings
+      .cameraWarningMode;
+
+  if (
+    mode ===
+      "country_compliance" &&
+    country === "DE"
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
-async function submitReport(type){
-  const msg = byId("reportMsg");
+function haversineMeters(
+  lat1,
+  lng1,
+  lat2,
+  lng2
+) {
 
-  msg.classList.add("hidden");
+  const R = 6371000;
 
-  if (!currentPosition){
+  const rad =
+    d =>
+      d * Math.PI / 180;
+
+  const p1 =
+    rad(lat1);
+
+  const p2 =
+    rad(lat2);
+
+  const dp =
+    rad(lat2 - lat1);
+
+  const dl =
+    rad(lng2 - lng1);
+
+  const a =
+    Math.sin(dp / 2) ** 2
+    +
+    Math.cos(p1)
+    *
+    Math.cos(p2)
+    *
+    Math.sin(dl / 2) ** 2;
+
+  return (
+    2 *
+    R *
+    Math.atan2(
+      Math.sqrt(a),
+      Math.sqrt(1 - a)
+    )
+  );
+}
+
+function bearingDegrees(
+  lat1,
+  lng1,
+  lat2,
+  lng2
+) {
+
+  const rad =
+    d =>
+      d * Math.PI / 180;
+
+  const deg =
+    r =>
+      r * 180 / Math.PI;
+
+  const p1 =
+    rad(lat1);
+
+  const p2 =
+    rad(lat2);
+
+  const dl =
+    rad(lng2 - lng1);
+
+  const y =
+    Math.sin(dl)
+    *
+    Math.cos(p2);
+
+  const x =
+    Math.cos(p1)
+    *
+    Math.sin(p2)
+    -
+    Math.sin(p1)
+    *
+    Math.cos(p2)
+    *
+    Math.cos(dl);
+
+  return (
+    deg(
+      Math.atan2(
+        y,
+        x
+      )
+    )
+    + 360
+  ) % 360;
+}
+
+function angleDifference(
+  a,
+  b
+) {
+
+  return Math.abs(
+    (
+      (
+        a - b + 540
+      ) % 360
+    )
+    - 180
+  );
+}
+
+function targetIsAhead(
+  target
+) {
+
+  const heading =
+    currentPosition
+      ?.heading;
+
+  const speed =
+    currentPosition
+      ?.speed;
+
+  if (
+    heading == null ||
+    heading < 0 ||
+    speed == null ||
+    speed < 4.2
+  ) {
+    return true;
+  }
+
+  const bearing =
+    bearingDegrees(
+      currentPosition.lat,
+      currentPosition.lng,
+      target.lat,
+      target.lng
+    );
+
+  return (
+    angleDifference(
+      heading,
+      bearing
+    )
+    <= 90
+  );
+}
+
+function evaluateProximityAlerts() {
+
+  const card =
+    byId(
+      "proximityAlertCard"
+    );
+
+  const nearbyBadge =
+    byId(
+      "nearbyBadge"
+    );
+
+  if (
+    !card ||
+    !currentPosition ||
+    !proximitySettings.enabled
+  ) {
+
+    if (card) {
+      card.classList.add(
+        "hidden"
+      );
+    }
+
+    if (nearbyBadge) {
+      nearbyBadge.textContent =
+        "Nearby: waiting GPS";
+    }
+
+    currentProximityTarget =
+      null;
+
+    return;
+  }
+
+  let nearest = null;
+
+  const now =
+    Date.now();
+
+  for (
+    const target
+    of proximityTargets
+  ) {
+
+    const dismissed =
+      dismissedUntil
+        .get(target.id)
+      || 0;
+
+    if (
+      dismissed >
+      now
+    ) {
+      continue;
+    }
+
+    const distanceM =
+      haversineMeters(
+        currentPosition.lat,
+        currentPosition.lng,
+        target.lat,
+        target.lng
+      );
+
+    if (
+      distanceM >
+      proximitySettings.maxDistanceM
+    ) {
+      continue;
+    }
+
+    if (
+      !targetIsAhead(
+        target
+      )
+    ) {
+      continue;
+    }
+
+    if (
+      !nearest ||
+      distanceM <
+      nearest.distanceM
+    ) {
+
+      nearest = {
+        ...target,
+        distanceM
+      };
+    }
+  }
+
+  if (!nearest) {
+
+    card.classList.add(
+      "hidden"
+    );
+
+    if (nearbyBadge) {
+
+      nearbyBadge.textContent =
+        `Nearby: none < ${Math.round(proximitySettings.maxDistanceM)}m`;
+
+      nearbyBadge
+        .classList
+        .remove(
+          "good"
+        );
+    }
+
+    currentProximityTarget =
+      null;
+
+    return;
+  }
+
+  if (nearbyBadge) {
+
+    nearbyBadge.textContent =
+      `Nearby: ${nearest.type} ${formatDistance(nearest.distanceM)}`;
+
+    nearbyBadge
+      .classList
+      .add(
+        "good"
+      );
+  }
+
+  currentProximityTarget =
+    nearest;
+
+  renderProximityAlert(
+    nearest
+  );
+
+  maybeSpeakProximityAlert(
+    nearest
+  );
+}
+
+function renderProximityAlert(
+  target
+) {
+
+  const card =
+    byId(
+      "proximityAlertCard"
+    );
+
+  if (!card) return;
+
+  const style =
+    reportStyle[target.type]
+    || {
+      emoji: "⚠️"
+    };
+
+  byId(
+    "proximityAlertIcon"
+  ).textContent =
+    style.emoji
+    || "⚠️";
+
+  byId(
+    "proximityAlertTitle"
+  ).textContent =
+    alertTitleForType(
+      target.type
+    );
+
+  byId(
+    "proximityAlertDistance"
+  ).textContent =
+    formatDistance(
+      target.distanceM
+    );
+
+  byId(
+    "proximityAlertLocation"
+  ).textContent =
+    target.location
+    || "Verified nearby report";
+
+  card.classList.remove(
+    "hidden"
+  );
+
+  card.classList.toggle(
+    "urgent",
+
+    target.distanceM
+    <=
+    proximitySettings
+      .urgentDistanceM
+  );
+}
+
+function alertTitleForType(
+  type
+) {
+
+  const titles = {
+
+    accident:
+      "Accident ahead",
+
+    hazard:
+      "Hazard ahead",
+
+    roadwork:
+      "Roadwork ahead",
+
+    traffic:
+      "Traffic ahead",
+
+    police:
+      "Police report ahead",
+
+    camera:
+      "Camera ahead"
+  };
+
+  return (
+    titles[type]
+    ||
+    "Road alert ahead"
+  );
+}
+
+function formatDistance(
+  meters
+) {
+
+  if (
+    meters < 1000
+  ) {
+
+    return `${
+      Math.max(
+        10,
+        Math.round(
+          meters / 10
+        ) * 10
+      )
+    } m`;
+  }
+
+  return `${
+    (
+      meters / 1000
+    ).toFixed(1)
+  } km`;
+}
+
+function voiceMessageForTarget(
+  target
+) {
+
+  const d =
+    Math.max(
+      50,
+      Math.round(
+        target.distanceM
+        / 50
+      ) * 50
+    );
+
+  const phrases = {
+
+    accident:
+      `Accident ahead in ${d} meters.`,
+
+    hazard:
+      `Hazard ahead in ${d} meters.`,
+
+    roadwork:
+      `Roadworks ahead in ${d} meters.`,
+
+    traffic:
+      `Traffic ahead in ${d} meters.`,
+
+    police:
+      `Police report ahead in ${d} meters.`,
+
+    camera:
+      `Camera ahead in ${d} meters.`
+  };
+
+  return (
+    phrases[target.type]
+    ||
+    `Road alert ahead in ${d} meters.`
+  );
+}
+
+function maybeSpeakProximityAlert(
+  target
+) {
+
+  if (
+    !voiceEnabledByUser ||
+    !proximitySettings.voice ||
+    !(
+      "speechSynthesis"
+      in window
+    )
+  ) {
+    return;
+  }
+
+  const now =
+    Date.now();
+
+  const previous =
+    lastAlertedAt
+      .get(target.id)
+    || 0;
+
+  const cooldownMs =
+    proximitySettings
+      .cooldownS
+    * 1000;
+
+  if (
+    now - previous
+    <
+    cooldownMs
+  ) {
+    return;
+  }
+
+  lastAlertedAt.set(
+    target.id,
+    now
+  );
+
+  const utterance =
+    new SpeechSynthesisUtterance(
+      voiceMessageForTarget(
+        target
+      )
+    );
+
+  utterance.lang =
+    proximitySettings.language
+    || "en-GB";
+
+  utterance.rate =
+    1.0;
+
+  utterance.pitch =
+    1.0;
+
+  window
+    .speechSynthesis
+    .cancel();
+
+  window
+    .speechSynthesis
+    .speak(
+      utterance
+    );
+}
+
+function toggleVoiceAlerts() {
+
+  voiceEnabledByUser =
+    !voiceEnabledByUser;
+
+  localStorage.setItem(
+    "roadpulse_voice",
+
+    voiceEnabledByUser
+      ? "on"
+      : "off"
+  );
+
+  if (
+    "speechSynthesis"
+    in window
+  ) {
+
+    window
+      .speechSynthesis
+      .cancel();
+
+    if (
+      voiceEnabledByUser &&
+      proximitySettings.voice
+    ) {
+
+      const u =
+        new SpeechSynthesisUtterance(
+          "Voice alerts enabled."
+        );
+
+      u.lang =
+        proximitySettings.language
+        || "en-GB";
+
+      u.rate =
+        1.0;
+
+      window
+        .speechSynthesis
+        .speak(u);
+    }
+  }
+
+  updateVoiceBadge();
+}
+
+function updateVoiceBadge() {
+
+  const badge =
+    byId("voiceBadge");
+
+  if (!badge) return;
+
+  const effectiveOn =
+    voiceEnabledByUser
+    &&
+    proximitySettings.voice;
+
+  badge.textContent =
+    effectiveOn
+      ? "🔊 Voice ON"
+      : "🔇 Voice OFF";
+
+  badge.classList.toggle(
+    "off",
+    !effectiveOn
+  );
+}
+
+function dismissCurrentAlert() {
+
+  if (
+    !currentProximityTarget
+  ) {
+    return;
+  }
+
+  dismissedUntil.set(
+    currentProximityTarget.id,
+
+    Date.now()
+    +
+    10 * 60 * 1000
+  );
+
+  byId(
+    "proximityAlertCard"
+  )
+    ?.classList
+    .add(
+      "hidden"
+    );
+
+  currentProximityTarget =
+    null;
+}
+
+function openReportSheet() {
+
+  const el =
+    byId(
+      "reportSheet"
+    );
+
+  el.classList.remove(
+    "hidden"
+  );
+
+  byId(
+    "reportMsg"
+  )
+    .classList
+    .add(
+      "hidden"
+    );
+}
+
+function closeReportSheet() {
+
+  byId(
+    "reportSheet"
+  )
+    .classList
+    .add(
+      "hidden"
+    );
+}
+
+async function submitReport(
+  type
+) {
+
+  const msg =
+    byId(
+      "reportMsg"
+    );
+
+  msg.classList.add(
+    "hidden"
+  );
+
+  if (
+    !currentPosition
+  ) {
 
     msg.textContent =
       "GPS location is not ready yet. Allow location access and try again.";
@@ -665,44 +1947,67 @@ async function submitReport(type){
       "error"
     );
 
-    msg.classList.add("error");
+    msg.classList.add(
+      "error"
+    );
 
     startGpsWatch();
 
     return;
   }
 
-  const r = await fetch(
-    "/api/reports",
-    {
-      method:"POST",
-      credentials:"include",
+  const r =
+    await fetch(
+      "/api/reports",
+      {
+        method:
+          "POST",
 
-      headers:{
-        "Content-Type":"application/json"
-      },
+        credentials:
+          "include",
 
-      body:JSON.stringify({
-        type,
-        lat:currentPosition.lat,
-        lng:currentPosition.lng,
-        location:"User GPS report"
-      })
-    }
-  );
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+            type,
+
+            lat:
+              currentPosition.lat,
+
+            lng:
+              currentPosition.lng,
+
+            location:
+              "User GPS report"
+          })
+      }
+    );
 
   const data =
-    await r.json().catch(()=>({}));
+    await r
+      .json()
+      .catch(
+        () => ({})
+      );
 
-  if (!r.ok){
+  if (!r.ok) {
 
     msg.textContent =
-      data.detail ||
+      data.detail
+      ||
       "Could not submit report.";
 
-    msg.classList.remove("hidden");
+    msg.classList.remove(
+      "hidden"
+    );
 
-    msg.classList.add("error");
+    msg.classList.add(
+      "error"
+    );
 
     return;
   }
@@ -721,123 +2026,166 @@ async function submitReport(type){
   );
 }
 
-function esc(v){
-  return String(v ?? "")
-    .replace(
-      /[&<>"']/g,
-      s=>({
-        "&":"&amp;",
-        "<":"&lt;",
-        ">":"&gt;",
-        '"':"&quot;",
-        "'":"&#039;"
-      })[s]
-    );
-}
+function esc(v) {
 
+  return String(
+    v ?? ""
+  ).replace(
+    /[&<>"']/g,
+
+    s => ({
+      "&":
+        "&amp;",
+
+      "<":
+        "&lt;",
+
+      ">":
+        "&gt;",
+
+      '"':
+        "&quot;",
+
+      "'":
+        "&#039;"
+    })[s]
+  );
+}
 
 /* ==========================
    ADMIN
 ========================== */
 
-async function adminLogin(){
+async function adminLogin() {
 
-  const r = await fetch(
-    "/api/admin/login",
-    {
-      method:"POST",
+  const r =
+    await fetch(
+      "/api/admin/login",
+      {
+        method:
+          "POST",
 
-      credentials:"include",
+        credentials:
+          "include",
 
-      headers:{
-        "Content-Type":"application/json"
-      },
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
 
-      body:JSON.stringify({
-        password:
-          byId("adminPassword").value
-      })
-    }
-  );
+        body:
+          JSON.stringify({
+            password:
+              byId(
+                "adminPassword"
+              ).value
+          })
+      }
+    );
 
-  if (!r.ok){
+  if (!r.ok) {
 
     const msg =
-      byId("adminLoginMsg");
+      byId(
+        "adminLoginMsg"
+      );
 
     msg.textContent =
       "Admin login failed.";
 
-    msg.classList.remove("hidden");
+    msg.classList.remove(
+      "hidden"
+    );
 
-    msg.classList.add("error");
+    msg.classList.add(
+      "error"
+    );
 
     return;
   }
 
-  byId("adminPassword").value = "";
+  byId(
+    "adminPassword"
+  ).value = "";
 
   await loadAdmin();
 }
 
-async function adminLogout(){
+async function adminLogout() {
 
   await fetch(
     "/api/admin/logout",
     {
-      method:"POST",
-      credentials:"include"
+      method:
+        "POST",
+
+      credentials:
+        "include"
     }
   );
 
   location.hash = "";
 
-  showOnly("userAuthView");
+  showOnly(
+    "userAuthView"
+  );
 
   routeByHash();
 }
 
-async function loadAdmin(){
+async function loadAdmin() {
 
-  const r = await fetch(
-    "/api/admin/dashboard",
-    {
-      credentials:"include"
-    }
-  );
+  const r =
+    await fetch(
+      "/api/admin/dashboard",
+      {
+        credentials:
+          "include"
+      }
+    );
 
-  if (!r.ok){
-    showOnly("adminLoginView");
+  if (!r.ok) {
+
+    showOnly(
+      "adminLoginView"
+    );
+
     return;
   }
 
   adminData =
     await r.json();
 
-  showOnly("adminView");
+  showOnly(
+    "adminView"
+  );
 
   renderAdmin();
 }
 
-function renderAdmin(){
+function renderAdmin() {
 
   const c =
     adminData.counts;
 
-  byId("statIncidents")
-    .textContent =
+  byId(
+    "statIncidents"
+  ).textContent =
     c.live_incidents;
 
-  byId("statPending")
-    .textContent =
+  byId(
+    "statPending"
+  ).textContent =
     c.pending_reports;
 
-  byId("statCameras")
-    .textContent =
+  byId(
+    "statCameras"
+  ).textContent =
     c.camera_count;
 
-  byId("statUsers")
-    .textContent =
+  byId(
+    "statUsers"
+  ).textContent =
     c.active_users;
 
   renderSettings();
@@ -879,10 +2227,28 @@ const settingDescriptions = {
     "Apply country-by-country camera rules.",
 
   app_name:
-    "Public display name."
+    "Public display name.",
+
+  proximity_alerts:
+    "Show nearby verified road alerts.",
+
+  alert_distance_m:
+    "Maximum proximity alert distance.",
+
+  urgent_alert_distance_m:
+    "Urgent warning distance.",
+
+  alert_repeat_cooldown_s:
+    "Repeat voice alert cooldown.",
+
+  voice_language:
+    "Browser speech language."
 };
 
-function boolRow(k,v){
+function boolRow(
+  k,
+  v
+) {
 
   return `
     <div class="setting-row">
@@ -890,17 +2256,25 @@ function boolRow(k,v){
       <div class="meta">
 
         <strong>
-          ${esc(k.replaceAll("_"," "))}
+          ${esc(
+            k.replaceAll(
+              "_",
+              " "
+            )
+          )}
         </strong>
 
         <small>
-          ${esc(settingDescriptions[k]||"")}
+          ${esc(
+            settingDescriptions[k]
+            || ""
+          )}
         </small>
 
       </div>
 
       <div
-        class="switch ${v?"on":""}"
+        class="switch ${v ? "on" : ""}"
         onclick="updateSetting('${k}',${!v})">
       </div>
 
@@ -908,7 +2282,10 @@ function boolRow(k,v){
   `;
 }
 
-function scalarRow(k,v){
+function scalarRow(
+  k,
+  v
+) {
 
   return `
     <div class="setting-row">
@@ -916,11 +2293,19 @@ function scalarRow(k,v){
       <div class="meta">
 
         <strong>
-          ${esc(k.replaceAll("_"," "))}
+          ${esc(
+            k.replaceAll(
+              "_",
+              " "
+            )
+          )}
         </strong>
 
         <small>
-          ${esc(settingDescriptions[k]||"")}
+          ${esc(
+            settingDescriptions[k]
+            || ""
+          )}
         </small>
 
       </div>
@@ -935,7 +2320,7 @@ function scalarRow(k,v){
   `;
 }
 
-function renderSettings(){
+function renderSettings() {
 
   const s =
     adminData.settings;
@@ -946,60 +2331,97 @@ function renderSettings(){
     "community_reports",
     "camera_layer",
     "traffic_layer",
-    "hazard_layer"
+    "hazard_layer",
+    "proximity_alerts"
   ];
 
-  byId("quickSettings")
-    .innerHTML =
-    q.map(k=>
-      typeof s[k] === "boolean"
-        ? boolRow(k,s[k])
-        : scalarRow(k,s[k])
+  byId(
+    "quickSettings"
+  ).innerHTML =
+
+    q.map(k =>
+
+      typeof s[k]
+      === "boolean"
+
+        ? boolRow(
+            k,
+            s[k]
+          )
+
+        : scalarRow(
+            k,
+            s[k]
+          )
+
     ).join("");
 
-  byId("allSettings")
-    .innerHTML =
-    Object.entries(s)
-      .map(([k,v])=>
-        typeof v === "boolean"
-          ? boolRow(k,v)
-          : scalarRow(k,v)
+  byId(
+    "allSettings"
+  ).innerHTML =
+
+    Object
+      .entries(s)
+      .map(
+        ([k, v]) =>
+
+          typeof v
+          === "boolean"
+
+            ? boolRow(
+                k,
+                v
+              )
+
+            : scalarRow(
+                k,
+                v
+              )
       )
       .join("");
 }
 
-async function updateSetting(k,v){
+async function updateSetting(
+  k,
+  v
+) {
 
-  const r = await fetch(
-    `/api/admin/settings/${encodeURIComponent(k)}`,
-    {
-      method:"PUT",
+  const r =
+    await fetch(
+      `/api/admin/settings/${encodeURIComponent(k)}`,
+      {
+        method:
+          "PUT",
 
-      credentials:"include",
+        credentials:
+          "include",
 
-      headers:{
-        "Content-Type":"application/json"
-      },
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
 
-      body:JSON.stringify({
-        value:v
-      })
-    }
-  );
+        body:
+          JSON.stringify({
+            value: v
+          })
+      }
+    );
 
-  if (r.ok){
+  if (r.ok) {
 
-    adminData.settings[k] = v;
+    adminData.settings[k] =
+      v;
 
     renderSettings();
   }
 }
 
-function renderReports(){
+function renderReports() {
 
   const rows =
     adminData.reports
-      .map(r=>`
+      .map(r => `
 
         <tr>
 
@@ -1018,7 +2440,8 @@ function renderReports(){
           <td>
             ${
               r.lat != null
-                ? Number(r.lat).toFixed(5)
+                ? Number(r.lat)
+                    .toFixed(5)
                 : "—"
             }
           </td>
@@ -1026,15 +2449,19 @@ function renderReports(){
           <td>
             ${
               r.lng != null
-                ? Number(r.lng).toFixed(5)
+                ? Number(r.lng)
+                    .toFixed(5)
                 : "—"
             }
           </td>
 
           <td>
 
-            <span class="status ${esc(r.status)}">
+            <span
+              class="status ${esc(r.status)}">
+
               ${esc(r.status)}
+
             </span>
 
           </td>
@@ -1043,18 +2470,24 @@ function renderReports(){
 
             <button
               onclick="setReportStatus(${r.id},'verified')">
+
               Verify
+
             </button>
 
             <button
               onclick="setReportStatus(${r.id},'pending')">
+
               Pending
+
             </button>
 
             <button
               class="reject"
               onclick="setReportStatus(${r.id},'rejected')">
+
               Reject
+
             </button>
 
           </td>
@@ -1064,7 +2497,9 @@ function renderReports(){
       `)
       .join("");
 
-  byId("reportsTable").innerHTML = `
+  byId(
+    "reportsTable"
+  ).innerHTML = `
 
     <table>
 
@@ -1093,35 +2528,41 @@ function renderReports(){
 async function setReportStatus(
   id,
   status
-){
+) {
 
-  const r = await fetch(
-    `/api/admin/reports/${id}/status`,
-    {
-      method:"PUT",
+  const r =
+    await fetch(
+      `/api/admin/reports/${id}/status`,
+      {
+        method:
+          "PUT",
 
-      credentials:"include",
+        credentials:
+          "include",
 
-      headers:{
-        "Content-Type":"application/json"
-      },
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
 
-      body:JSON.stringify({
-        status
-      })
-    }
-  );
+        body:
+          JSON.stringify({
+            status
+          })
+      }
+    );
 
-  if (r.ok){
+  if (r.ok) {
+
     await loadAdmin();
   }
 }
 
-function renderCameras(){
+function renderCameras() {
 
   const rows =
     adminData.cameras
-      .map(c=>`
+      .map(c => `
 
         <tr>
 
@@ -1134,7 +2575,7 @@ function renderCameras(){
           </td>
 
           <td>
-            ${esc(c.speed_limit??"—")}
+            ${esc(c.speed_limit ?? "—")}
           </td>
 
           <td>
@@ -1144,7 +2585,8 @@ function renderCameras(){
           <td>
             ${
               c.lat != null
-                ? Number(c.lat).toFixed(5)
+                ? Number(c.lat)
+                    .toFixed(5)
                 : "—"
             }
           </td>
@@ -1152,7 +2594,8 @@ function renderCameras(){
           <td>
             ${
               c.lng != null
-                ? Number(c.lng).toFixed(5)
+                ? Number(c.lng)
+                    .toFixed(5)
                 : "—"
             }
           </td>
@@ -1170,7 +2613,9 @@ function renderCameras(){
             <button
               class="reject"
               onclick="deleteCamera(${c.id})">
+
               Delete
+
             </button>
 
           </td>
@@ -1180,7 +2625,9 @@ function renderCameras(){
       `)
       .join("");
 
-  byId("cameraTable").innerHTML = `
+  byId(
+    "cameraTable"
+  ).innerHTML = `
 
     <table>
 
@@ -1207,123 +2654,166 @@ function renderCameras(){
   `;
 }
 
-async function addCamera(){
+async function addCamera() {
 
   const payload = {
 
     camera_type:
-      byId("cameraType").value,
+      byId(
+        "cameraType"
+      ).value,
 
     location:
-      byId("cameraLocation").value,
+      byId(
+        "cameraLocation"
+      ).value,
 
     speed_limit:
-      byId("cameraSpeed").value
+      byId(
+        "cameraSpeed"
+      ).value
+
         ? Number(
-            byId("cameraSpeed").value
+            byId(
+              "cameraSpeed"
+            ).value
           )
+
         : null,
 
     confidence:
       Number(
-        byId("cameraConfidence").value
+        byId(
+          "cameraConfidence"
+        ).value
         || 50
       ),
 
     lat:
-      byId("cameraLat").value
+      byId(
+        "cameraLat"
+      ).value
+
         ? Number(
-            byId("cameraLat").value
+            byId(
+              "cameraLat"
+            ).value
           )
+
         : null,
 
     lng:
-      byId("cameraLng").value
+      byId(
+        "cameraLng"
+      ).value
+
         ? Number(
-            byId("cameraLng").value
+            byId(
+              "cameraLng"
+            ).value
           )
+
         : null,
 
-    enabled:true
+    enabled: true
   };
 
-  const r = await fetch(
-    "/api/admin/cameras",
-    {
-      method:"POST",
+  const r =
+    await fetch(
+      "/api/admin/cameras",
+      {
+        method:
+          "POST",
 
-      credentials:"include",
+        credentials:
+          "include",
 
-      headers:{
-        "Content-Type":"application/json"
-      },
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
 
-      body:
-        JSON.stringify(payload)
-    }
-  );
+        body:
+          JSON.stringify(
+            payload
+          )
+      }
+    );
 
-  if (r.ok){
+  if (r.ok) {
 
     [
       "cameraLocation",
       "cameraSpeed",
       "cameraLat",
       "cameraLng"
-    ]
-    .forEach(id=>{
-      byId(id).value="";
+    ].forEach(id => {
+
+      byId(id).value =
+        "";
     });
 
     await loadAdmin();
   }
 }
 
-async function deleteCamera(id){
+async function deleteCamera(
+  id
+) {
 
-  const r = await fetch(
-    `/api/admin/cameras/${id}`,
-    {
-      method:"DELETE",
-      credentials:"include"
-    }
-  );
+  const r =
+    await fetch(
+      `/api/admin/cameras/${id}`,
+      {
+        method:
+          "DELETE",
 
-  if (r.ok){
+        credentials:
+          "include"
+      }
+    );
+
+  if (r.ok) {
+
     await loadAdmin();
   }
 }
 
-function renderUsers(){
+function renderUsers() {
 
   const staffRows =
-    (adminData.users||[])
-      .map(u=>`
+    (
+      adminData.users
+      || []
+    )
+    .map(u => `
 
-        <tr>
+      <tr>
 
-          <td>
-            ${esc(u.name)}
-          </td>
+        <td>
+          ${esc(u.name)}
+        </td>
 
-          <td>
-            ${esc(u.role)}
-          </td>
+        <td>
+          ${esc(u.role)}
+        </td>
 
-          <td>
-            ${
-              u.active
-                ? "Active"
-                : "Disabled"
-            }
-          </td>
+        <td>
+          ${
+            u.active
+              ? "Active"
+              : "Disabled"
+          }
+        </td>
 
-        </tr>
+      </tr>
 
-      `)
-      .join("");
+    `)
+    .join("");
 
-  byId("usersTable").innerHTML = `
+  byId(
+    "usersTable"
+  ).innerHTML = `
 
     <table>
 
@@ -1345,33 +2835,38 @@ function renderUsers(){
   `;
 
   const appRows =
-    (adminData.app_users||[])
-      .map(u=>`
+    (
+      adminData.app_users
+      || []
+    )
+    .map(u => `
 
-        <tr>
+      <tr>
 
-          <td>
-            ${esc(u.name)}
-          </td>
+        <td>
+          ${esc(u.name)}
+        </td>
 
-          <td>
-            ${esc(u.email)}
-          </td>
+        <td>
+          ${esc(u.email)}
+        </td>
 
-          <td>
-            ${
-              u.active
-                ? "Active"
-                : "Disabled"
-            }
-          </td>
+        <td>
+          ${
+            u.active
+              ? "Active"
+              : "Disabled"
+          }
+        </td>
 
-        </tr>
+      </tr>
 
-      `)
-      .join("");
+    `)
+    .join("");
 
-  byId("appUsersTable").innerHTML = `
+  byId(
+    "appUsersTable"
+  ).innerHTML = `
 
     <table>
 
@@ -1388,7 +2883,8 @@ function renderUsers(){
       <tbody>
 
         ${
-          appRows ||
+          appRows
+          ||
           '<tr><td colspan="3">No registered app users yet.</td></tr>'
         }
 
@@ -1399,35 +2895,53 @@ function renderUsers(){
 }
 
 document
-  .querySelectorAll(".nav")
-  .forEach(btn=>{
+  .querySelectorAll(
+    ".nav"
+  )
+  .forEach(btn => {
 
     btn.addEventListener(
       "click",
-      ()=>{
+      () => {
 
         document
-          .querySelectorAll(".nav")
-          .forEach(x=>
-            x.classList.remove("active")
-          );
+          .querySelectorAll(
+            ".nav"
+          )
+          .forEach(x => {
 
-        btn.classList.add("active");
+            x.classList.remove(
+              "active"
+            );
+          });
+
+        btn.classList.add(
+          "active"
+        );
 
         document
-          .querySelectorAll(".tab")
-          .forEach(x=>
-            x.classList.add("hidden")
-          );
+          .querySelectorAll(
+            ".tab"
+          )
+          .forEach(x => {
+
+            x.classList.add(
+              "hidden"
+            );
+          });
 
         byId(
-          btn.dataset.tab+"Tab"
+          btn.dataset.tab
+          + "Tab"
         )
         .classList
-        .remove("hidden");
+        .remove(
+          "hidden"
+        );
 
-        byId("pageTitle")
-          .textContent =
+        byId(
+          "pageTitle"
+        ).textContent =
           btn.textContent;
       }
     );
