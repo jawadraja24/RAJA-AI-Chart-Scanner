@@ -653,7 +653,8 @@ def navigation_route(payload: NavigationRoutePayload, request: Request):
     _validate_lat_lng(payload.destination_lat, payload.destination_lng)
 
     language = normalize_nav_language(payload.language)
-    travel_mode = "pedestrian" if str(payload.travel_mode).lower() == "pedestrian" else "car"
+    requested_mode = str(payload.travel_mode or "car").lower().strip()
+    travel_mode = requested_mode if requested_mode in {"car", "pedestrian", "bicycle"} else "car"
     locations = (
         f"{payload.origin_lat:.6f},{payload.origin_lng:.6f}:"
         f"{payload.destination_lat:.6f},{payload.destination_lng:.6f}"
@@ -661,7 +662,7 @@ def navigation_route(payload: NavigationRoutePayload, request: Request):
 
     params = {
         "key": TOMTOM_API_KEY,
-        "traffic": "false" if travel_mode == "pedestrian" else "true",
+        "traffic": "false" if travel_mode in {"pedestrian", "bicycle"} else "true",
         "travelMode": travel_mode,
         "routeType": "fastest",
         "instructionsType": "text",
@@ -681,7 +682,8 @@ def navigation_route(payload: NavigationRoutePayload, request: Request):
     data = _tomtom_json_get(url, timeout=15)
     routes = data.get("routes") or []
     if not routes:
-        raise HTTPException(404, "No walking route found" if travel_mode == "pedestrian" else "No driving route found")
+        route_labels = {"pedestrian": "walking", "bicycle": "cycling", "car": "driving"}
+        raise HTTPException(404, f"No {route_labels.get(travel_mode, 'driving')} route found")
 
     route = routes[0]
     summary = route.get("summary") or {}
@@ -999,6 +1001,25 @@ def delete_camera(camera_id: int, request: Request):
     con.commit()
     con.close()
     return {"ok": True}
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+def pwa_manifest():
+    return FileResponse(
+        WEB_DIR / "manifest.webmanifest",
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+@app.get("/service-worker.js", include_in_schema=False)
+def pwa_service_worker():
+    return FileResponse(
+        WEB_DIR / "service-worker.js",
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-cache",
+            "Service-Worker-Allowed": "/",
+        },
+    )
 
 app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
 
