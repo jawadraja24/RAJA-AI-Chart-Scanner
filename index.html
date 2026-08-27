@@ -8,13 +8,13 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="RoadPulse">
-  <link rel="manifest" href="/manifest.webmanifest?v=webv141pwa1">
+  <link rel="manifest" href="/manifest.webmanifest?v=webv15pwa1">
   <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
   <title>RoadPulse AI</title>
 
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=webv14pwa1">
+  <link rel="stylesheet" href="/assets/styles.css?v=webv151mobile1">
 </head>
 <body>
 <main class="shell">
@@ -99,7 +99,6 @@
           class="outline-btn install-app-btn"
           id="installAppBtn"
           type="button"
-          disabled
           onclick="installRoadPulseApp()"
           title="Install RoadPulse AI"
         >⬇ <span class="install-label">Install</span></button>
@@ -110,6 +109,15 @@
 
     <div class="map-shell">
       <div id="pwaInstallToast" class="pwa-install-toast hidden"></div>
+
+      <section id="installHelpSheet" class="install-help-sheet hidden" aria-live="polite">
+        <div class="install-help-card">
+          <button class="install-help-close" type="button" onclick="closeRoadPulseInstallHelp()">×</button>
+          <div class="install-help-icon">⬇</div>
+          <h3 id="installHelpTitle">Install RoadPulse AI</h3>
+          <div id="installHelpBody"></div>
+        </div>
+      </section>
       <div id="map"></div>
 
       <section class="destination-search">
@@ -141,6 +149,7 @@
       <section id="navigationCard" class="navigation-card hidden" aria-live="polite">
         <div id="navManeuverIcon" class="nav-maneuver-icon">↑</div>
         <div class="nav-guidance-copy">
+          <span id="navModeBadge" class="nav-mode-badge" data-mode="car">🚗 Drive</span>
           <strong id="navInstruction">Continue</strong>
           <span id="navInstructionDistance">—</span>
           <div class="next-road-line">
@@ -186,6 +195,14 @@
         <span id="nearbyBadge" class="pill nearby-pill">Nearby: checking…</span>
         <span id="networkBadge" class="pill network-pill">Online</span>
       </div>
+
+      <button
+        id="mapRecenterBtn"
+        class="map-recenter-btn hidden"
+        type="button"
+        onclick="enableRouteFollow()"
+        title="Re-center and follow"
+      >◎ <span>Re-center</span></button>
 
       <div id="trafficLegend" class="traffic-legend hidden">
         <strong>Live Traffic</strong>
@@ -332,7 +349,7 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/assets/app.js?v=webv13modes1"></script>
-<script src="/assets/pwa.js?v=webv141pwa1"></script>
+<script src="/assets/app.js?v=webv15easy1"></script>
+<script src="/assets/pwa.js?v=webv15pwa1"></script>
 </body>
 </html>
