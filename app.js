@@ -2704,3 +2704,1085 @@ function formatRouteDistance(meters){
       )
   } km`;
 }
+function stopNavigation(clearDestination=true){
+  navigationActive = false;
+  navRoute = null;
+  navRoutePoints = [];
+  navInstructions = [];
+  navCurrentInstructionIndex = 0;
+  navLastProgressIndex = 0;
+  navInstructionAnnouncements.clear();
+  navBaseSummary = null;
+  navFollowMode = true;
+  releaseNavigationWakeLock();
+
+  document.body.classList.remove("navigation-active");
+
+  if (navRouteLayer && map){
+    map.removeLayer(navRouteLayer);
+  }
+
+  navRouteLayer = null;
+
+  byId("navigationCard")
+    ?.classList
+    .add("hidden");
+
+  byId("routeSummaryCard")
+    ?.classList
+    .add("hidden");
+
+  if (clearDestination){
+    navDestination = null;
+
+    const input =
+      byId("destinationSearchInput");
+
+    if (input){
+      input.value = "";
+    }
+
+    byId("clearDestinationBtn")
+      ?.classList
+      .add("hidden");
+  }
+}
+
+async function manualReroute(){
+  if (
+    !navigationActive ||
+    !navDestination
+  ){
+    return;
+  }
+
+  navLastRerouteAt = 0;
+
+  await calculateNavigationRoute(true);
+}
+
+function updateNavigationProgress(){
+  if (
+    !navigationActive ||
+    !currentPosition ||
+    navRoutePoints.length < 2
+  ){
+    return;
+  }
+
+  const nearest =
+    nearestRoutePoint(
+      currentPosition.lat,
+      currentPosition.lng
+    );
+
+  if (!nearest){
+    return;
+  }
+
+  navLastProgressIndex =
+    Math.max(
+      navLastProgressIndex,
+      nearest.index
+    );
+
+  updateRemainingRouteSummary();
+
+  const nextIndex =
+    findNextInstructionIndex(
+      navLastProgressIndex
+    );
+
+  if (nextIndex >= 0){
+    navCurrentInstructionIndex =
+      nextIndex;
+
+    const instruction =
+      navInstructions[nextIndex];
+
+    renderNavigationInstruction(
+      instruction
+    );
+
+    maybeSpeakTurnInstruction(
+      instruction,
+      nextIndex
+    );
+  }
+
+  const now =
+    Date.now();
+
+  const speed =
+    Number(
+      currentPosition.speed || 0
+    );
+
+  if (
+    nearest.distanceM > 120 &&
+    speed > 2.5 &&
+    now - navLastRerouteAt > 35000
+  ){
+    calculateNavigationRoute(true);
+    return;
+  }
+
+  if (
+    speed > 2.5 &&
+    now - navLastTrafficRefreshAt > 180000
+  ){
+    navLastTrafficRefreshAt =
+      now;
+
+    calculateNavigationRoute(true);
+  }
+
+  const destinationDistance =
+    haversineMeters(
+      currentPosition.lat,
+      currentPosition.lng,
+      navDestination.lat,
+      navDestination.lng
+    );
+
+  if (destinationDistance < 35){
+    byId("navManeuverIcon")
+      .textContent = "✓";
+
+    byId("navInstruction")
+      .textContent =
+      t("arrived");
+
+    byId("navInstructionDistance")
+      .textContent = "";
+
+    byId("navDestinationName")
+      .textContent =
+      navDestination.name;
+
+    const arrivalKey =
+      "arrival";
+
+    if (
+      !navInstructionAnnouncements
+        .has(arrivalKey) &&
+      voiceEnabledByUser &&
+      proximitySettings.voice
+    ){
+      navInstructionAnnouncements
+        .add(arrivalKey);
+
+      speakNavigationMessage(
+        t("arrived")
+      );
+    }
+  }
+}
+
+function nearestRoutePoint(lat,lng){
+  if (
+    navRoutePoints.length === 0
+  ){
+    return null;
+  }
+
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+
+  for (
+    let i=0;
+    i<navRoutePoints.length;
+    i++
+  ){
+    const p =
+      navRoutePoints[i];
+
+    const d =
+      haversineMeters(
+        lat,
+        lng,
+        p[0],
+        p[1]
+      );
+
+    if (d < bestDistance){
+      bestDistance = d;
+      bestIndex = i;
+    }
+  }
+
+  return {
+    index:bestIndex,
+    distanceM:bestDistance
+  };
+}
+
+function findNextInstructionIndex(
+  progressIndex
+){
+  if (
+    navInstructions.length === 0
+  ){
+    return -1;
+  }
+
+  for (
+    let i=0;
+    i<navInstructions.length;
+    i++
+  ){
+    const instruction =
+      navInstructions[i];
+
+    if (
+      Number(
+        instruction.pointIndex || 0
+      ) >= progressIndex
+    ){
+      return i;
+    }
+  }
+
+  return (
+    navInstructions.length - 1
+  );
+}
+
+function renderNavigationInstruction(
+  instruction
+){
+  if (!instruction){
+    return;
+  }
+
+  const distance =
+    (
+      instruction.lat != null &&
+      instruction.lng != null
+    )
+      ? haversineMeters(
+          currentPosition.lat,
+          currentPosition.lng,
+          Number(instruction.lat),
+          Number(instruction.lng)
+        )
+      : 0;
+
+  byId("navManeuverIcon")
+    .textContent =
+    maneuverIcon(
+      instruction.maneuver
+    );
+
+  byId("navInstruction")
+    .textContent =
+    instruction.message ||
+    "Continue";
+
+  byId("navInstructionDistance")
+    .textContent =
+    distance > 0
+      ? formatDistance(distance)
+      : "";
+
+  const roadName =
+    getInstructionRoadName(
+      instruction
+    );
+
+  const nextRoad =
+    byId("navNextRoad");
+
+  if (nextRoad){
+    nextRoad.textContent =
+      roadName || "—";
+  }
+
+  byId("navDestinationName")
+    .textContent =
+    navDestination?.name ||
+    t("destination");
+}
+
+function maneuverIcon(maneuver){
+  const icons = {
+    TURN_LEFT:"↰",
+    SHARP_LEFT:"↶",
+    BEAR_LEFT:"↖",
+    KEEP_LEFT:"↖",
+
+    TURN_RIGHT:"↱",
+    SHARP_RIGHT:"↷",
+    BEAR_RIGHT:"↗",
+    KEEP_RIGHT:"↗",
+
+    STRAIGHT:"↑",
+    FOLLOW:"↑",
+
+    ENTER_MOTORWAY:"⇧",
+    ENTER_FREEWAY:"⇧",
+    ENTER_HIGHWAY:"⇧",
+
+    ENTRANCE_RAMP:"↗",
+    TAKE_EXIT:"↗",
+
+    MOTORWAY_EXIT_LEFT:"↖",
+    MOTORWAY_EXIT_RIGHT:"↗",
+
+    MAKE_UTURN:"↶",
+    TRY_MAKE_UTURN:"↶",
+
+    ROUNDABOUT_LEFT:"⟲",
+    ROUNDABOUT_RIGHT:"⟳",
+    ROUNDABOUT_CROSS:"⟳",
+
+    ARRIVE:"✓",
+    ARRIVE_LEFT:"✓",
+    ARRIVE_RIGHT:"✓",
+
+    DEPART:"↑"
+  };
+
+  return (
+    icons[maneuver] ||
+    "↑"
+  );
+}
+
+function getInstructionRoadName(
+  instruction
+){
+  if (!instruction){
+    return "";
+  }
+
+  if (instruction.street){
+    return String(
+      instruction.street
+    );
+  }
+
+  if (
+    Array.isArray(
+      instruction.roadNumbers
+    ) &&
+    instruction.roadNumbers.length
+  ){
+    return instruction
+      .roadNumbers
+      .join(" / ");
+  }
+
+  if (instruction.exitNumber){
+    return `Exit ${instruction.exitNumber}`;
+  }
+
+  return "";
+}
+
+function getNavigationAudioContext(){
+  if (navAudioContext){
+    return navAudioContext;
+  }
+
+  const AudioCtx =
+    window.AudioContext ||
+    window.webkitAudioContext;
+
+  if (!AudioCtx){
+    return null;
+  }
+
+  try{
+    navAudioContext =
+      new AudioCtx();
+  }catch(_){
+    return null;
+  }
+
+  return navAudioContext;
+}
+
+async function unlockNavigationAudio(){
+  const ctx =
+    getNavigationAudioContext();
+
+  if (!ctx){
+    return;
+  }
+
+  try{
+    if (
+      ctx.state === "suspended"
+    ){
+      await ctx.resume();
+    }
+  }catch(_){}
+}
+
+function playNavigationChime(
+  kind="normal"
+){
+  const ctx =
+    getNavigationAudioContext();
+
+  if (
+    !ctx ||
+    ctx.state !== "running"
+  ){
+    return;
+  }
+
+  const now =
+    ctx.currentTime;
+
+  const notes =
+    kind === "urgent"
+      ? [
+          {f:880,t:0,d:.10},
+          {f:1175,t:.13,d:.13}
+        ]
+      : [
+          {f:660,t:0,d:.10},
+          {f:880,t:.13,d:.12}
+        ];
+
+  for (const note of notes){
+    const osc =
+      ctx.createOscillator();
+
+    const gain =
+      ctx.createGain();
+
+    osc.type =
+      "sine";
+
+    osc.frequency
+      .setValueAtTime(
+        note.f,
+        now + note.t
+      );
+
+    gain.gain
+      .setValueAtTime(
+        0.0001,
+        now + note.t
+      );
+
+    gain.gain
+      .exponentialRampToValueAtTime(
+        0.12,
+        now + note.t + 0.015
+      );
+
+    gain.gain
+      .exponentialRampToValueAtTime(
+        0.0001,
+        now + note.t + note.d
+      );
+
+    osc.connect(gain);
+
+    gain.connect(
+      ctx.destination
+    );
+
+    osc.start(
+      now + note.t
+    );
+
+    osc.stop(
+      now +
+      note.t +
+      note.d +
+      0.03
+    );
+  }
+}
+
+function navigationVoiceMessage(
+  instruction,
+  threshold
+){
+  const base =
+    instruction?.message ||
+    "Continue";
+
+  const road =
+    getInstructionRoadName(
+      instruction
+    );
+
+  let message =
+    base;
+
+  if (
+    road &&
+    !String(base)
+      .toLowerCase()
+      .includes(
+        String(road)
+          .toLowerCase()
+      )
+  ){
+    message =
+      `${base}. ${t("nextRoad")}: ${road}.`;
+  }
+
+  if (threshold <= 70){
+    return message;
+  }
+
+  return (
+    `${localizedInMeters(threshold)}, ${message}`
+  );
+}
+
+function maybeSpeakTurnInstruction(
+  instruction,
+  index
+){
+  if (
+    !instruction ||
+    !voiceEnabledByUser ||
+    !proximitySettings.voice ||
+    instruction.lat == null ||
+    instruction.lng == null
+  ){
+    return;
+  }
+
+  const distance =
+    haversineMeters(
+      currentPosition.lat,
+      currentPosition.lng,
+      Number(instruction.lat),
+      Number(instruction.lng)
+    );
+
+  let threshold =
+    null;
+
+  if (distance <= 70){
+    threshold = 70;
+
+  }else if (distance <= 250){
+    threshold = 250;
+
+  }else if (distance <= 700){
+    threshold = 700;
+  }
+
+  if (threshold == null){
+    return;
+  }
+
+  const key =
+    `${index}:${threshold}`;
+
+  if (
+    navInstructionAnnouncements
+      .has(key)
+  ){
+    return;
+  }
+
+  navInstructionAnnouncements
+    .add(key);
+
+  playNavigationChime(
+    threshold <= 70
+      ? "urgent"
+      : "normal"
+  );
+
+  const message =
+    navigationVoiceMessage(
+      instruction,
+      threshold
+    );
+
+  setTimeout(
+    () => {
+      speakNavigationMessage(
+        message
+      );
+    },
+    330
+  );
+}
+
+function speakNavigationMessage(
+  message
+){
+  if (
+    !message ||
+    !voiceEnabledByUser ||
+    !proximitySettings.voice ||
+    !(
+      "speechSynthesis"
+      in window
+    )
+  ){
+    return;
+  }
+
+  const u =
+    new SpeechSynthesisUtterance(
+      message
+    );
+
+  u.lang =
+    userLanguage ||
+    "en-GB";
+
+  u.rate = 1.0;
+  u.pitch = 1.0;
+
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+
+function rememberRecentDestination(
+  destination
+){
+  if (!destination){
+    return;
+  }
+
+  recentDestinations = [
+    destination,
+    ...recentDestinations
+      .filter(
+        x =>
+          !sameDestination(
+            x,
+            destination
+          )
+      )
+  ]
+  .slice(0,6);
+
+  saveStoredDestinations(
+    "roadpulse_recent",
+    recentDestinations
+  );
+}
+
+function toggleFavoriteSearchResult(
+  event,
+  index
+){
+  event?.stopPropagation();
+
+  const item =
+    navSearchResults[index];
+
+  if (!item){
+    return;
+  }
+
+  const destination = {
+    name:item.name,
+    address:item.address,
+    lat:Number(item.lat),
+    lng:Number(item.lng)
+  };
+
+  toggleFavoriteDestination(
+    destination
+  );
+
+  renderDestinationResults();
+}
+
+function toggleFavoriteDestination(
+  destination
+){
+  const existingIndex =
+    favoriteDestinations
+      .findIndex(
+        x =>
+          sameDestination(
+            x,
+            destination
+          )
+      );
+
+  if (existingIndex >= 0){
+    favoriteDestinations.splice(
+      existingIndex,
+      1
+    );
+
+  }else{
+    favoriteDestinations.unshift(
+      destination
+    );
+  }
+
+  favoriteDestinations =
+    favoriteDestinations
+      .slice(0,10);
+
+  saveStoredDestinations(
+    "roadpulse_favorites",
+    favoriteDestinations
+  );
+
+  renderDestinationQuickList();
+}
+
+function saveCurrentDestination(){
+  if (!navDestination){
+    return;
+  }
+
+  const saved =
+    favoriteDestinations
+      .some(
+        x =>
+          sameDestination(
+            x,
+            navDestination
+          )
+      );
+
+  toggleFavoriteDestination(
+    navDestination
+  );
+
+  if (
+    voiceEnabledByUser &&
+    proximitySettings.voice
+  ){
+    speakNavigationMessage(
+      saved
+        ? "Destination removed from saved places."
+        : "Destination saved."
+    );
+  }
+}
+
+function renderDestinationQuickList(){
+  const box =
+    byId(
+      "destinationQuickList"
+    );
+
+  if (!box){
+    return;
+  }
+
+  const items = [];
+
+  favoriteDestinations
+    .slice(0,5)
+    .forEach(
+      item => {
+        items.push({
+          ...item,
+          _kind:"favorite"
+        });
+      }
+    );
+
+  recentDestinations
+    .filter(
+      item =>
+        !favoriteDestinations
+          .some(
+            x =>
+              sameDestination(
+                x,
+                item
+              )
+          )
+    )
+    .slice(0,5)
+    .forEach(
+      item => {
+        items.push({
+          ...item,
+          _kind:"recent"
+        });
+      }
+    );
+
+  if (items.length === 0){
+    box.classList.add(
+      "hidden"
+    );
+
+    return;
+  }
+
+  box.innerHTML =
+    items
+      .map(
+        (item,index) => `
+          <button
+            class="quick-destination-chip ${item._kind === "favorite" ? "favorite" : ""}"
+            onclick="chooseQuickDestination(${index})"
+            title="${esc(item.address || item.name)}">
+
+            ${
+              item._kind === "favorite"
+                ? "★"
+                : "↺"
+            }
+
+            ${esc(item.name)}
+
+          </button>
+        `
+      )
+      .join("");
+
+  box.dataset.items =
+    JSON.stringify(items);
+
+  box.classList.remove(
+    "hidden"
+  );
+}
+
+function chooseQuickDestination(index){
+  unlockNavigationAudio();
+
+  const box =
+    byId(
+      "destinationQuickList"
+    );
+
+  if (!box){
+    return;
+  }
+
+  let items = [];
+
+  try{
+    items =
+      JSON.parse(
+        box.dataset.items ||
+        "[]"
+      );
+
+  }catch(_){}
+
+  const item =
+    items[index];
+
+  if (!item){
+    return;
+  }
+
+  navDestination = {
+    name:item.name,
+    address:item.address,
+    lat:Number(item.lat),
+    lng:Number(item.lng)
+  };
+
+  const input =
+    byId(
+      "destinationSearchInput"
+    );
+
+  if (input){
+    input.value =
+      navDestination.name;
+  }
+
+  box.classList.add(
+    "hidden"
+  );
+
+  byId("clearDestinationBtn")
+    ?.classList
+    .remove("hidden");
+
+  rememberRecentDestination(
+    navDestination
+  );
+
+  requestNavigationWakeLock();
+
+  startNavigation();
+}
+
+function enableRouteFollow(){
+  navFollowMode = true;
+
+  updateFollowButton();
+
+  if (
+    currentPosition &&
+    map
+  ){
+    map.setView(
+      [
+        currentPosition.lat,
+        currentPosition.lng
+      ],
+      17,
+      {
+        animate:true
+      }
+    );
+  }
+}
+
+function showRouteOverview(){
+  navFollowMode = false;
+
+  updateFollowButton();
+
+  if (
+    navRouteLayer &&
+    map
+  ){
+    try{
+      map.fitBounds(
+        navRouteLayer.getBounds(),
+        {
+          padding:[70,70],
+          maxZoom:16
+        }
+      );
+
+    }catch(_){}
+  }
+}
+
+function updateFollowButton(){
+  const btn =
+    byId(
+      "followRouteBtn"
+    );
+
+  if (!btn){
+    return;
+  }
+
+  btn.classList.toggle(
+    "active",
+    navFollowMode
+  );
+
+  btn.textContent =
+    navFollowMode
+      ? `◎ ${t("follow")}`
+      : `◎ ${t("followOff")}`;
+
+  updateRouteControlLabels();
+}
+
+async function requestNavigationWakeLock(){
+  if (
+    !navigationActive &&
+    !navDestination
+  ){
+    return;
+  }
+
+  if (
+    !(
+      "wakeLock"
+      in navigator
+    ) ||
+    document.visibilityState !== "visible"
+  ){
+    return;
+  }
+
+  try{
+    if (!navWakeLock){
+      navWakeLock =
+        await navigator
+          .wakeLock
+          .request(
+            "screen"
+          );
+
+      navWakeLock
+        .addEventListener(
+          "release",
+          () => {
+            navWakeLock =
+              null;
+          }
+        );
+    }
+
+  }catch(_){}
+}
+
+async function releaseNavigationWakeLock(){
+  try{
+    if (navWakeLock){
+      await navWakeLock.release();
+    }
+
+  }catch(_){}
+
+  navWakeLock =
+    null;
+}
+
+function calculateRemainingRouteMeters(){
+  if (
+    !navRoutePoints ||
+    navRoutePoints.length < 2
+  ){
+    return 0;
+  }
+
+  let total = 0;
+
+  const start =
+    Math.max(
+      0,
+      Math.min(
+        navLastProgressIndex,
+        navRoutePoints.length - 1
+      )
+    );
+
+  if (currentPosition){
+    const p =
+      navRoutePoints[start];
+
+    total +=
+      haversineMeters(
+        currentPosition.lat,
+        currentPosition.lng,
+        p[0],
+        p[1]
+      );
+  }
+
+  for (
+    let i=start;
+    i<navRoutePoints.length - 1;
+    i++
+  ){
+    const a =
+      navRoutePoints[i];
+
+    const b =
+      navRoutePoints[i+1];
+
+    total +=
+      haversineMeters(
+        a[0],
+        a[1],
+        b[0],
+        b[1]
+      );
+  }
+
+  return total;
+}
+
+function updateRemainingRouteSummary(){
