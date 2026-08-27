@@ -1,128 +1,2509 @@
-let roadPulseInstallPrompt = null;
 
-function roadPulseIsInstalled(){
+function safeLocalGet(key, fallback=null){
+  try{
+    const value = window.localStorage.getItem(key);
+    return value === null ? fallback : value;
+  }catch(_){
+    return fallback;
+  }
+}
+
+function safeLocalSet(key, value){
+  try{
+    window.localStorage.setItem(key, value);
+  }catch(_){}
+}
+
+let currentUser = null;
+let map = null;
+let userMarker = null;
+let userAccuracyCircle = null;
+let currentPosition = null;
+let watchId = null;
+let incidentLayer = null;
+let cameraLayer = null;
+let trafficFlowLayer = null;
+let trafficIncidentLayer = null;
+let trafficEnabledByUser = true;
+let trafficConfigured = false;
+let trafficRefreshTimer = null;
+let proximityTargets = [];
+let proximitySettings = {
+  enabled:true,
+  voice:true,
+  maxDistanceM:1200,
+  urgentDistanceM:400,
+  cooldownS:300,
+  language:"en-GB",
+  defaultCountry:"DE",
+  cameraWarningMode:"country_compliance"
+};
+let voiceEnabledByUser = safeLocalGet("roadpulse_voice", "on") !== "off";
+let lastAlertedAt = new Map();
+let dismissedUntil = new Map();
+let currentProximityTarget = null;
+let proximityEvalTimer = null;
+let navigationActive = false;
+let navDestination = null;
+let navRoute = null;
+let navRouteLayer = null;
+let navRouteOutlineLayer = null;
+let navRoutePoints = [];
+let navInstructions = [];
+let navCurrentInstructionIndex = 0;
+let navLastProgressIndex = 0;
+let navLastRerouteAt = 0;
+let navLastTrafficRefreshAt = 0;
+let navSearchTimer = null;
+let navSearchResults = [];
+let navRequestInFlight = false;
+let navInstructionAnnouncements = new Set();
+let navFollowMode = true;
+let navWakeLock = null;
+let navBaseSummary = null;
+const storedNavigationMode = safeLocalGet("roadpulse_nav_mode", "car");
+let navigationMode = ["car","pedestrian","bicycle"].includes(storedNavigationMode)
+  ? storedNavigationMode
+  : "car";
+let favoriteDestinations = loadStoredDestinations("roadpulse_favorites");
+let recentDestinations = loadStoredDestinations("roadpulse_recent");
+let navAudioContext = null;
+let navLastChimeKey = null;
+let adminData = null;
+
+
+
+const SUPPORTED_APP_LANGUAGES = [
+  "en-GB","de-DE","it-IT","fr-FR","es-ES","nl-NL","pt-PT","pl-PL",
+  "cs-CZ","da-DK","sv-SE","fi-FI","nb-NO","hu-HU","tr-TR","sk-SK",
+  "sl-SI","lt-LT","el-GR","bg-BG","ru-RU","ar"
+];
+
+let userLanguage = "en-GB";
+
+const UI_TRANSLATIONS = {
+  "en-GB":{
+    logout:"Log out", search:"Where do you want to go?", nextRoad:"Next road",
+    destination:"Destination", voiceOn:"Voice ON", voiceOff:"Voice OFF",
+    online:"Online", offline:"Offline", navigate:"Navigate", myGps:"My GPS",
+    report:"Report", refresh:"Refresh", follow:"Following", followOff:"Follow",
+    overview:"Overview", save:"Save", route:"Route", trafficDelay:"Traffic delay",
+    distance:"Distance", drive:"Drive", walk:"Walk", cycle:"Bike", driveMode:"Drive", walkMode:"Walk", cycleMode:"Bike", eta:"ETA", arrived:"You have arrived",
+    routeUpdated:"Route updated.", voiceEnabled:"Voice alerts enabled.",
+    hazardAhead:"Hazard ahead", accidentAhead:"Accident ahead",
+    roadworkAhead:"Roadwork ahead", trafficAhead:"Traffic ahead",
+    policeAhead:"Police report ahead", roadAlertAhead:"Road alert ahead",
+    inMeters:"in {n} meters"
+  },
+  "de-DE":{
+    logout:"Abmelden", search:"Wohin möchtest du fahren?", nextRoad:"Nächste Straße",
+    destination:"Ziel", voiceOn:"Stimme AN", voiceOff:"Stimme AUS",
+    online:"Online", offline:"Offline", navigate:"Navigation", myGps:"Mein GPS",
+    report:"Melden", refresh:"Aktualisieren", follow:"Folge Route", followOff:"Folgen",
+    overview:"Übersicht", save:"Speichern", route:"Route", trafficDelay:"Verkehrsverzögerung",
+    distance:"Entfernung", drive:"Fahrzeit", walk:"Zu Fuß", cycle:"Rad", driveMode:"Auto", walkMode:"Zu Fuß", cycleMode:"Fahrrad", eta:"Ankunft", arrived:"Ziel erreicht",
+    routeUpdated:"Route aktualisiert.", voiceEnabled:"Sprachhinweise aktiviert.",
+    hazardAhead:"Gefahr voraus", accidentAhead:"Unfall voraus",
+    roadworkAhead:"Baustelle voraus", trafficAhead:"Verkehr voraus",
+    policeAhead:"Polizeimeldung voraus", roadAlertAhead:"Straßenhinweis voraus",
+    inMeters:"in {n} Metern"
+  },
+  "it-IT":{
+    logout:"Esci", search:"Dove vuoi andare?", nextRoad:"Prossima strada",
+    destination:"Destinazione", voiceOn:"Voce ON", voiceOff:"Voce OFF",
+    online:"Online", offline:"Offline", navigate:"Naviga", myGps:"Il mio GPS",
+    report:"Segnala", refresh:"Aggiorna", follow:"Segui", followOff:"Segui",
+    overview:"Panoramica", save:"Salva", route:"Percorso", trafficDelay:"Ritardo traffico",
+    distance:"Distanza", drive:"Durata", walk:"A piedi", cycle:"Bici", driveMode:"Auto", walkMode:"A piedi", cycleMode:"Bici", eta:"Arrivo", arrived:"Sei arrivato",
+    routeUpdated:"Percorso aggiornato.", voiceEnabled:"Avvisi vocali attivati.",
+    hazardAhead:"Pericolo più avanti", accidentAhead:"Incidente più avanti",
+    roadworkAhead:"Lavori stradali più avanti", trafficAhead:"Traffico più avanti",
+    policeAhead:"Segnalazione polizia più avanti", roadAlertAhead:"Avviso stradale più avanti",
+    inMeters:"tra {n} metri"
+  },
+  "fr-FR":{
+    logout:"Déconnexion", search:"Où voulez-vous aller ?", nextRoad:"Prochaine route",
+    destination:"Destination", voiceOn:"Voix ON", voiceOff:"Voix OFF",
+    online:"En ligne", offline:"Hors ligne", navigate:"Naviguer", myGps:"Mon GPS",
+    report:"Signaler", refresh:"Actualiser", follow:"Suivi", followOff:"Suivre",
+    overview:"Aperçu", save:"Enregistrer", route:"Itinéraire", trafficDelay:"Retard trafic",
+    distance:"Distance", drive:"Durée", walk:"À pied", cycle:"Vélo", driveMode:"Voiture", walkMode:"À pied", cycleMode:"Vélo", eta:"Arrivée", arrived:"Vous êtes arrivé",
+    routeUpdated:"Itinéraire mis à jour.", voiceEnabled:"Alertes vocales activées.",
+    hazardAhead:"Danger devant", accidentAhead:"Accident devant",
+    roadworkAhead:"Travaux devant", trafficAhead:"Trafic devant",
+    policeAhead:"Signalement police devant", roadAlertAhead:"Alerte routière devant",
+    inMeters:"dans {n} mètres"
+  },
+  "es-ES":{
+    logout:"Salir", search:"¿A dónde quieres ir?", nextRoad:"Próxima vía",
+    destination:"Destino", voiceOn:"Voz ON", voiceOff:"Voz OFF",
+    online:"En línea", offline:"Sin conexión", navigate:"Navegar", myGps:"Mi GPS",
+    report:"Reportar", refresh:"Actualizar", follow:"Siguiendo", followOff:"Seguir",
+    overview:"Vista general", save:"Guardar", route:"Ruta", trafficDelay:"Retraso tráfico",
+    distance:"Distancia", drive:"Duración", walk:"A pie", cycle:"Bici", driveMode:"Coche", walkMode:"A pie", cycleMode:"Bici", eta:"Llegada", arrived:"Has llegado",
+    routeUpdated:"Ruta actualizada.", voiceEnabled:"Avisos de voz activados.",
+    hazardAhead:"Peligro más adelante", accidentAhead:"Accidente más adelante",
+    roadworkAhead:"Obras más adelante", trafficAhead:"Tráfico más adelante",
+    policeAhead:"Aviso de policía más adelante", roadAlertAhead:"Aviso vial más adelante",
+    inMeters:"en {n} metros"
+  },
+  "nl-NL":{
+    logout:"Uitloggen", search:"Waar wil je naartoe?", nextRoad:"Volgende weg",
+    destination:"Bestemming", voiceOn:"Stem AAN", voiceOff:"Stem UIT",
+    online:"Online", offline:"Offline", navigate:"Navigeren", myGps:"Mijn GPS",
+    report:"Melden", refresh:"Vernieuwen", follow:"Volgen", followOff:"Volgen",
+    overview:"Overzicht", save:"Opslaan", route:"Route", trafficDelay:"Vertraging",
+    distance:"Afstand", drive:"Rijtijd", walk:"Lopen", cycle:"Fiets", driveMode:"Auto", walkMode:"Lopen", cycleMode:"Fiets", eta:"Aankomst", arrived:"Je bent aangekomen",
+    routeUpdated:"Route bijgewerkt.", voiceEnabled:"Spraakmeldingen ingeschakeld.",
+    hazardAhead:"Gevaar verderop", accidentAhead:"Ongeval verderop",
+    roadworkAhead:"Wegwerkzaamheden verderop", trafficAhead:"Verkeer verderop",
+    policeAhead:"Politiemelding verderop", roadAlertAhead:"Wegmelding verderop",
+    inMeters:"over {n} meter"
+  },
+  "pt-PT":{
+    logout:"Sair", search:"Para onde quer ir?", nextRoad:"Próxima estrada",
+    destination:"Destino", voiceOn:"Voz ON", voiceOff:"Voz OFF",
+    online:"Online", offline:"Offline", navigate:"Navegar", myGps:"Meu GPS",
+    report:"Reportar", refresh:"Atualizar", follow:"Seguindo", followOff:"Seguir",
+    overview:"Visão geral", save:"Guardar", route:"Rota", trafficDelay:"Atraso no trânsito",
+    distance:"Distância", drive:"Duração", walk:"A pé", cycle:"Bicicleta", driveMode:"Carro", walkMode:"A pé", cycleMode:"Bicicleta", eta:"Chegada", arrived:"Chegou ao destino",
+    routeUpdated:"Rota atualizada.", voiceEnabled:"Alertas de voz ativados.",
+    hazardAhead:"Perigo à frente", accidentAhead:"Acidente à frente",
+    roadworkAhead:"Obras à frente", trafficAhead:"Trânsito à frente",
+    policeAhead:"Alerta de polícia à frente", roadAlertAhead:"Alerta rodoviário à frente",
+    inMeters:"em {n} metros"
+  },
+  "pl-PL":{
+    logout:"Wyloguj", search:"Dokąd chcesz jechać?", nextRoad:"Następna droga",
+    destination:"Cel", voiceOn:"Głos WŁ.", voiceOff:"Głos WYŁ.",
+    online:"Online", offline:"Offline", navigate:"Nawiguj", myGps:"Mój GPS",
+    report:"Zgłoś", refresh:"Odśwież", follow:"Prowadzenie", followOff:"Podążaj",
+    overview:"Przegląd", save:"Zapisz", route:"Trasa", trafficDelay:"Opóźnienie",
+    distance:"Dystans", drive:"Czas jazdy", walk:"Pieszo", cycle:"Rower", driveMode:"Auto", walkMode:"Pieszo", cycleMode:"Rower", eta:"Przyjazd", arrived:"Dotarłeś do celu",
+    routeUpdated:"Trasa zaktualizowana.", voiceEnabled:"Wskazówki głosowe włączone.",
+    hazardAhead:"Niebezpieczeństwo przed tobą", accidentAhead:"Wypadek przed tobą",
+    roadworkAhead:"Roboty drogowe przed tobą", trafficAhead:"Korek przed tobą",
+    policeAhead:"Zgłoszenie policji przed tobą", roadAlertAhead:"Ostrzeżenie drogowe",
+    inMeters:"za {n} metrów"
+  },
+  "tr-TR":{
+    logout:"Çıkış", search:"Nereye gitmek istiyorsun?", nextRoad:"Sonraki yol",
+    destination:"Hedef", voiceOn:"Ses AÇIK", voiceOff:"Ses KAPALI",
+    online:"Çevrimiçi", offline:"Çevrimdışı", navigate:"Navigasyon", myGps:"GPS'im",
+    report:"Bildir", refresh:"Yenile", follow:"Takip", followOff:"Takip et",
+    overview:"Genel görünüm", save:"Kaydet", route:"Rota", trafficDelay:"Trafik gecikmesi",
+    distance:"Mesafe", drive:"Sürüş", walk:"Yürüme", cycle:"Bisiklet", driveMode:"Araç", walkMode:"Yürü", cycleMode:"Bisiklet", eta:"Varış", arrived:"Hedefe ulaştınız",
+    routeUpdated:"Rota güncellendi.", voiceEnabled:"Sesli uyarılar açıldı.",
+    hazardAhead:"İleride tehlike", accidentAhead:"İleride kaza",
+    roadworkAhead:"İleride yol çalışması", trafficAhead:"İleride trafik",
+    policeAhead:"İleride polis bildirimi", roadAlertAhead:"İleride yol uyarısı",
+    inMeters:"{n} metre sonra"
+  }
+};
+
+function detectInitialLanguage(){
+  const browser = (navigator.language || "en-GB").toLowerCase();
+  const exact = SUPPORTED_APP_LANGUAGES.find(x=>x.toLowerCase() === browser);
+  if (exact) return exact;
+
+  const prefix = browser.split("-")[0];
+  const pref = SUPPORTED_APP_LANGUAGES.find(x=>x.toLowerCase().startsWith(prefix+"-") || x.toLowerCase() === prefix);
+  return pref || "en-GB";
+}
+
+function t(key){
+  const dict = UI_TRANSLATIONS[userLanguage] || UI_TRANSLATIONS["en-GB"];
+  return dict[key] || UI_TRANSLATIONS["en-GB"][key] || key;
+}
+
+function changeAppLanguage(language){
+  if (!SUPPORTED_APP_LANGUAGES.includes(language)){
+    language = "en-GB";
+  }
+
+  userLanguage = language;
+  safeLocalSet("roadpulse_language", userLanguage);
+  applyAppLanguage();
+
+  // Recalculate active route so TomTom returns road names/instructions
+  // in the newly selected language.
+  if (navigationActive && navDestination){
+    calculateNavigationRoute(true);
+  }else{
+    refreshMapData();
+  }
+}
+
+function initializeLanguageSafe(){
+  try{
+    const stored = safeLocalGet("roadpulse_language", "");
+    if (stored && SUPPORTED_APP_LANGUAGES.includes(stored)){
+      userLanguage = stored;
+    }else{
+      userLanguage = detectInitialLanguage();
+    }
+  }catch(_){
+    userLanguage = "en-GB";
+  }
+}
+
+function applyAppLanguage(){
+  const select = byId("appLanguageSelect");
+  if (select) select.value = userLanguage;
+
+  document.documentElement.lang = userLanguage;
+  document.documentElement.dir = userLanguage === "ar" ? "rtl" : "ltr";
+
+  const logout = byId("logoutBtn");
+  if (logout) logout.textContent = t("logout");
+
+  const search = byId("destinationSearchInput");
+  if (search) search.placeholder = t("search");
+
+  const nextRoad = byId("nextRoadLabel");
+  if (nextRoad) nextRoad.textContent = t("nextRoad");
+
+  const navDest = byId("navDestinationName");
+  if (navDest && !navigationActive) navDest.textContent = t("destination");
+
+  updateVoiceBadge();
+  updateNetworkBadge();
+  updateBottomNavigationLabels();
+  updateRouteControlLabels();
+  updateNavigationModeUI();
+}
+
+function updateBottomNavigationLabels(){
+  const buttons = document.querySelectorAll(".bottom-nav button span");
+  if (buttons.length >= 4){
+    buttons[0].textContent = t("navigate");
+    buttons[1].textContent = t("myGps");
+    buttons[2].textContent = t("report");
+    buttons[3].textContent = t("refresh");
+  }
+}
+
+function updateRouteControlLabels(){
+  const follow = byId("followRouteBtn");
+  if (follow){
+    follow.textContent = navFollowMode ? `◎ ${t("follow")}` : `◎ ${t("followOff")}`;
+  }
+
+  const summary = byId("routeSummaryCard");
+  if (!summary) return;
+  const labels = summary.querySelectorAll(":scope > div > span");
+  if (labels.length >= 4){
+    labels[0].textContent = t("eta");
+    labels[1].textContent = navigationMode === "pedestrian"
+      ? t("walk")
+      : (navigationMode === "bicycle" ? t("cycle") : t("drive"));
+    labels[2].textContent = t("distance");
+    labels[3].textContent = t("trafficDelay");
+  }
+
+  const controls = summary.querySelectorAll(".route-control-btn");
+  if (controls.length >= 4){
+    controls[1].textContent = `▱ ${t("overview")}`;
+    controls[2].textContent = `☆ ${t("save")}`;
+    controls[3].textContent = `↻ ${t("route")}`;
+  }
+}
+
+function setNavigationMode(mode){
+  const nextMode = ["car","pedestrian","bicycle"].includes(mode) ? mode : "car";
+  if (navigationMode === nextMode){
+    updateNavigationModeUI();
+    return;
+  }
+
+  navigationMode = nextMode;
+  safeLocalSet("roadpulse_nav_mode", navigationMode);
+  updateNavigationModeUI();
+
+  if (navigationActive && navDestination && currentPosition){
+    calculateNavigationRoute(true);
+  }
+}
+
+function updateNavigationModeUI(){
+  const carBtn = byId("navModeCarBtn");
+  const walkBtn = byId("navModeWalkBtn");
+  const bikeBtn = byId("navModeBikeBtn");
+  const summary = byId("routeSummaryCard");
+  const durationLabel = byId("routeDurationLabel");
+
+  if (carBtn){
+    carBtn.classList.toggle("active", navigationMode === "car");
+    carBtn.textContent = `🚗 ${t("driveMode")}`;
+  }
+  if (walkBtn){
+    walkBtn.classList.toggle("active", navigationMode === "pedestrian");
+    walkBtn.textContent = `🚶 ${t("walkMode")}`;
+  }
+  if (bikeBtn){
+    bikeBtn.classList.toggle("active", navigationMode === "bicycle");
+    bikeBtn.textContent = `🚲 ${t("cycleMode")}`;
+  }
+
+  if (durationLabel){
+    durationLabel.textContent = navigationMode === "pedestrian"
+      ? t("walk")
+      : (navigationMode === "bicycle" ? t("cycle") : t("drive"));
+  }
+
+  if (summary){
+    const nonTraffic = navigationMode === "pedestrian" || navigationMode === "bicycle";
+    summary.classList.toggle("walking-mode", navigationMode === "pedestrian");
+    summary.classList.toggle("cycling-mode", navigationMode === "bicycle");
+    summary.classList.toggle("nontraffic-mode", nonTraffic);
+  }
+
+  document.body.classList.toggle("walking-navigation", navigationMode === "pedestrian" && navigationActive);
+  document.body.classList.toggle("cycling-navigation", navigationMode === "bicycle" && navigationActive);
+  document.body.classList.toggle("car-navigation", navigationMode === "car" && navigationActive);
+}
+
+function localizedInMeters(n){
+  return t("inMeters").replace("{n}", String(n));
+}
+
+function localizedAlertTitle(type){
+  const keys = {
+    accident:"accidentAhead",
+    hazard:"hazardAhead",
+    roadwork:"roadworkAhead",
+    traffic:"trafficAhead",
+    police:"policeAhead"
+  };
+  return t(keys[type] || "roadAlertAhead");
+}
+
+function loadStoredDestinations(key){
+  try{
+    const value = JSON.parse(safeLocalGet(key, "[]") || "[]");
+    return Array.isArray(value) ? value.slice(0,12) : [];
+  }catch(_){
+    return [];
+  }
+}
+
+function saveStoredDestinations(key, items){
+  try{
+    safeLocalSet(key, JSON.stringify(items.slice(0,12)));
+  }catch(_){}
+}
+
+function sameDestination(a,b){
+  if (!a || !b) return false;
   return (
-    window.matchMedia("(display-mode: standalone)").matches ||
-    window.navigator.standalone === true
+    Math.abs(Number(a.lat)-Number(b.lat)) < 0.00001 &&
+    Math.abs(Number(a.lng)-Number(b.lng)) < 0.00001
   );
 }
 
-function roadPulseIsIOS(){
-  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+const byId = (id) => document.getElementById(id);
+
+function showOnly(id){
+  ["userAuthView","userAppView","adminLoginView","adminView"].forEach(x=>{
+    const el = byId(x);
+    if (el) el.classList.toggle("hidden", x !== id);
+  });
 }
 
-function showPwaInstallToast(message){
-  const toast = document.getElementById("pwaInstallToast");
-  if (!toast) return;
+async function routeByHash(){
+  const isAdmin =
+    location.hash.toLowerCase() === "#admin";
 
-  toast.textContent = message;
-  toast.classList.remove("hidden");
+  if (isAdmin){
+    try{
+      stopGpsWatch();
+    }catch(_){}
 
-  clearTimeout(window.__roadpulsePwaToastTimer);
-  window.__roadpulsePwaToastTimer = setTimeout(()=>{
-    toast.classList.add("hidden");
-  }, 4500);
-}
-
-function setInstallButtonState(){
-  const btn = document.getElementById("installAppBtn");
-  if (!btn) return;
-
-  if (roadPulseIsInstalled()){
-    btn.disabled = true;
-    btn.classList.add("installed");
-    btn.innerHTML = '✓ <span class="install-label">Installed</span>';
-    btn.title = "RoadPulse AI is installed";
+    showOnly("adminLoginView");
     return;
   }
-
-  btn.classList.remove("installed");
-
-  // iOS does not expose beforeinstallprompt.
-  if (roadPulseIsIOS()){
-    btn.disabled = false;
-    btn.innerHTML = '⬇ <span class="install-label">Install</span>';
-    btn.title = "Add RoadPulse AI to Home Screen";
-    return;
-  }
-
-  // Chrome/Edge/Android: only enable when the browser has declared the PWA installable.
-  if (roadPulseInstallPrompt){
-    btn.disabled = false;
-    btn.innerHTML = '⬇ <span class="install-label">Install</span>';
-    btn.title = "Install RoadPulse AI";
-  }else{
-    btn.disabled = true;
-    btn.innerHTML = '… <span class="install-label">Preparing</span>';
-    btn.title = "Preparing install";
-  }
-}
-
-async function installRoadPulseApp(){
-  if (roadPulseIsInstalled()){
-    setInstallButtonState();
-    return;
-  }
-
-  if (roadPulseIsIOS()){
-    showPwaInstallToast("iPhone/iPad: tap Share, then Add to Home Screen.");
-    return;
-  }
-
-  if (!roadPulseInstallPrompt){
-    // Button should normally be disabled in this state.
-    showPwaInstallToast("Install is still preparing. Refresh once if this remains disabled.");
-    setInstallButtonState();
-    return;
-  }
-
-  const promptEvent = roadPulseInstallPrompt;
-  roadPulseInstallPrompt = null;
-  setInstallButtonState();
 
   try{
-    // Must be called directly from the user's click.
-    await promptEvent.prompt();
-    const choice = await promptEvent.userChoice;
+    const r = await fetch(
+      "/api/auth/me",
+      {credentials:"include"}
+    );
 
-    if (choice && choice.outcome === "accepted"){
-      showPwaInstallToast("RoadPulse AI installation started.");
-    }else{
-      showPwaInstallToast("Installation cancelled.");
+    if (r.ok){
+      const data = await r.json();
+      currentUser = data.user;
+
+      try{
+        await openUserApp();
+      }catch(err){
+        console.error("RoadPulse user app open error:", err);
+        showOnly("userAuthView");
+      }
+
+      return;
     }
   }catch(err){
-    console.error("RoadPulse install prompt failed:", err);
-    showPwaInstallToast("Install prompt could not open. Refresh and try again.");
+    console.error("RoadPulse auth check error:", err);
+  }
+
+  try{
+    stopGpsWatch();
+  }catch(_){}
+
+  showOnly("userAuthView");
+}
+
+window.addEventListener("hashchange", routeByHash);
+window.addEventListener("load", async ()=>{
+  try{
+    initializeLanguageSafe();
+    applyAppLanguage();
+    updateNetworkBadge();
+    bindDestinationSearchControls();
+  }catch(err){
+    console.error("RoadPulse UI init warning:", err);
+  }
+
+  try{
+    await routeByHash();
+  }catch(err){
+    console.error("RoadPulse route/auth boot error:", err);
+
+    if (location.hash.toLowerCase() === "#admin"){
+      showOnly("adminLoginView");
+    }else{
+      showOnly("userAuthView");
+    }
+  }
+
+  window.__ROADPULSE_BOOT_OK__ = true;
+  console.log("RoadPulse Web V1.3 drive + walk + bike loaded");
+});
+window.addEventListener("online", updateNetworkBadge);
+window.addEventListener("offline", updateNetworkBadge);
+document.addEventListener("visibilitychange", ()=>{
+  if (
+    document.visibilityState === "visible" &&
+    navigationActive
+  ){
+    requestNavigationWakeLock();
+  }
+});
+
+
+function updateNetworkBadge(){
+  const badge = byId("networkBadge");
+  if (!badge) return;
+
+  const online = navigator.onLine !== false;
+  badge.textContent = online ? t("online") : t("offline");
+  badge.classList.toggle("offline", !online);
+}
+
+function showAuthTab(tab){
+  byId("loginForm").classList.toggle("hidden", tab !== "login");
+  byId("registerForm").classList.toggle("hidden", tab !== "register");
+  byId("loginTabBtn").classList.toggle("active", tab === "login");
+  byId("registerTabBtn").classList.toggle("active", tab === "register");
+  setUserAuthMessage("");
+}
+
+function setUserAuthMessage(message, isError=false){
+  const el = byId("userAuthMsg");
+  if (!message){
+    el.classList.add("hidden");
+    return;
+  }
+  el.textContent = message;
+  el.classList.remove("hidden");
+  el.classList.toggle("error", isError);
+}
+
+async function userRegister(){
+  setUserAuthMessage("");
+  const payload = {
+    name: byId("registerName").value.trim(),
+    email: byId("registerEmail").value.trim(),
+    password: byId("registerPassword").value
+  };
+  const r = await fetch("/api/auth/register", {
+    method:"POST", credentials:"include",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(payload)
+  });
+  const data = await r.json().catch(()=>({}));
+  if (!r.ok){
+    setUserAuthMessage(data.detail || "Could not create account.", true);
+    return;
+  }
+  currentUser = data.user;
+  await openUserApp();
+}
+
+async function userLogin(){
+  setUserAuthMessage("");
+  const payload = {
+    email: byId("loginEmail").value.trim(),
+    password: byId("loginPassword").value
+  };
+  const r = await fetch("/api/auth/login", {
+    method:"POST", credentials:"include",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(payload)
+  });
+  const data = await r.json().catch(()=>({}));
+  if (!r.ok){
+    setUserAuthMessage(data.detail || "Login failed.", true);
+    return;
+  }
+  currentUser = data.user;
+  await openUserApp();
+}
+
+async function userLogout(){
+  stopGpsWatch();
+  stopNavigation(false);
+
+  if (navSearchTimer){
+    clearTimeout(navSearchTimer);
+    navSearchTimer = null;
+  }
+
+  if (proximityEvalTimer){
+    clearInterval(proximityEvalTimer);
+    proximityEvalTimer = null;
+  }
+  if (map && trafficFlowLayer && map.hasLayer(trafficFlowLayer)) map.removeLayer(trafficFlowLayer);
+  if (map && trafficIncidentLayer && map.hasLayer(trafficIncidentLayer)) map.removeLayer(trafficIncidentLayer);
+  await fetch("/api/auth/logout", {method:"POST", credentials:"include"});
+  currentUser = null;
+  location.hash = "";
+  showOnly("userAuthView");
+}
+
+async function openUserApp(){
+  showOnly("userAppView");
+  applyAppLanguage();
+  bindDestinationSearchControls();
+  byId("userGreeting").textContent = currentUser ? `Hi ${currentUser.name}` : "Live map";
+  ensureMap();
+  await refreshMapData();
+  startGpsWatch();
+  setTimeout(()=> map && map.invalidateSize(), 50);
+
+  if (!proximityEvalTimer){
+    proximityEvalTimer = setInterval(()=>{
+      evaluateProximityAlerts();
+    }, 2000);
   }
 }
 
-window.addEventListener("beforeinstallprompt", event=>{
-  event.preventDefault();
-  roadPulseInstallPrompt = event;
-  setInstallButtonState();
-});
+function ensureMap(){
+  if (map) return;
 
-window.addEventListener("appinstalled", ()=>{
-  roadPulseInstallPrompt = null;
-  setInstallButtonState();
-  showPwaInstallToast("RoadPulse AI installed successfully.");
-});
+  map = L.map("map", {zoomControl:true}).setView([53.5511, 9.9937], 12);
 
-window.addEventListener("load", ()=>{
-  setInstallButtonState();
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom:19,
+    attribution:'&copy; OpenStreetMap contributors'
+  }).addTo(map);
 
-  if ("serviceWorker" in navigator){
-    navigator.serviceWorker
-      .register("/service-worker.js", {scope:"/"})
-      .then(()=> {
-        // Registration succeeded. beforeinstallprompt will enable the button
-        // once the browser finishes its own installability checks.
-      })
-      .catch(err=>{
-        console.error("RoadPulse service worker registration failed:", err);
-        showPwaInstallToast("App install service could not start. Refresh and try again.");
-      });
+  incidentLayer = L.layerGroup().addTo(map);
+  cameraLayer = L.layerGroup().addTo(map);
+
+  trafficFlowLayer = L.tileLayer("/api/traffic/flow/{z}/{x}/{y}", {
+    tileSize:256,
+    opacity:.88,
+    zIndex:250,
+    maxZoom:22,
+    updateWhenIdle:false,
+    keepBuffer:3
+  });
+
+  trafficIncidentLayer = L.tileLayer("/api/traffic/incidents/{z}/{x}/{y}", {
+    tileSize:256,
+    opacity:.92,
+    zIndex:260,
+    maxZoom:22,
+    updateWhenIdle:false,
+    keepBuffer:3
+  });
+
+  if (!trafficRefreshTimer){
+    trafficRefreshTimer = setInterval(()=>{
+      if (trafficConfigured && trafficEnabledByUser){
+        trafficFlowLayer && trafficFlowLayer.redraw();
+        trafficIncidentLayer && trafficIncidentLayer.redraw();
+      }
+    }, 60000);
   }
+
+  map.on("dragstart", ()=>{
+    if (navigationActive){
+      navFollowMode = false;
+      updateFollowButton();
+    }
+  });
+}
+
+function startGpsWatch(){
+  if (!navigator.geolocation){
+    setGpsBadge("GPS not supported", false);
+    return;
+  }
+  if (watchId !== null) return;
+
+  setGpsBadge("Requesting GPS…", false);
+  watchId = navigator.geolocation.watchPosition(
+    onGpsPosition,
+    onGpsError,
+    {enableHighAccuracy:true, maximumAge:5000, timeout:15000}
+  );
+}
+
+function stopGpsWatch(){
+  if (watchId !== null && navigator.geolocation){
+    navigator.geolocation.clearWatch(watchId);
+  }
+  watchId = null;
+}
+
+function onGpsPosition(pos){
+  currentPosition = {
+    lat: pos.coords.latitude,
+    lng: pos.coords.longitude,
+    accuracy: pos.coords.accuracy,
+    speed: pos.coords.speed,
+    heading: pos.coords.heading
+  };
+
+  const latlng = [currentPosition.lat, currentPosition.lng];
+
+  if (!userMarker){
+    userMarker = L.circleMarker(latlng, {
+      radius:9, color:"#ffffff", weight:3, fillColor:"#2d70d6", fillOpacity:1
+    }).addTo(map).bindPopup("<strong>Your live GPS location</strong>");
+  }else{
+    userMarker.setLatLng(latlng);
+  }
+
+  if (!userAccuracyCircle){
+    userAccuracyCircle = L.circle(latlng, {
+      radius:currentPosition.accuracy,
+      color:"#2d70d6", weight:1, fillOpacity:.08
+    }).addTo(map);
+  }else{
+    userAccuracyCircle.setLatLng(latlng);
+    userAccuracyCircle.setRadius(currentPosition.accuracy);
+  }
+
+  if (!map.__centeredOnUser){
+    map.setView(latlng, 15);
+    map.__centeredOnUser = true;
+  }
+
+  const speedKmh = currentPosition.speed != null && currentPosition.speed >= 0
+    ? Math.round(currentPosition.speed * 3.6)
+    : null;
+
+  setGpsBadge(
+    `GPS live · ±${Math.round(currentPosition.accuracy)}m`,
+    true
+  );
+
+  const speedBadge = byId("speedBadge");
+  if (speedBadge){
+    speedBadge.textContent = `${speedKmh ?? 0} km/h`;
+  }
+
+  evaluateProximityAlerts();
+  updateNavigationProgress();
+
+  if (
+    navigationActive &&
+    navFollowMode &&
+    map
+  ){
+    map.setView(
+      [currentPosition.lat,currentPosition.lng],
+      Math.max(map.getZoom(),16),
+      {animate:true}
+    );
+  }
+}
+
+function onGpsError(err){
+  const messages = {
+    1:"Location permission denied",
+    2:"GPS position unavailable",
+    3:"GPS request timed out"
+  };
+  setGpsBadge(messages[err.code] || "GPS error", false);
+}
+
+function setGpsBadge(text, good){
+  const el = byId("gpsBadge");
+  el.textContent = text;
+  el.classList.toggle("good", !!good);
+  el.classList.toggle("warning", !good);
+}
+
+function centerOnUser(){
+  if (navigationActive){
+    navFollowMode = true;
+    updateFollowButton();
+  }
+
+  if (map && currentPosition){
+    map.setView([currentPosition.lat, currentPosition.lng], 16);
+    userMarker && userMarker.openPopup();
+  }else{
+    startGpsWatch();
+    setGpsBadge("Waiting for GPS…", false);
+  }
+}
+
+const reportStyle = {
+  camera:  {color:"#2d70d6", emoji:"📷"},
+  police:  {color:"#3159b8", emoji:"🚓"},
+  accident:{color:"#d63b32", emoji:"🚗"},
+  hazard:  {color:"#e09b18", emoji:"⚠️"},
+  roadwork:{color:"#d97818", emoji:"🚧"},
+  traffic: {color:"#17a65b", emoji:"🚦"}
+};
+
+async function refreshMapData(){
+  if (!map) return;
+
+  const r = await fetch("/api/map-data", {credentials:"include"});
+  if (r.status === 401){
+    await userLogout();
+    return;
+  }
+  if (!r.ok) return;
+
+  const data = await r.json();
+  incidentLayer.clearLayers();
+  cameraLayer.clearLayers();
+
+  data.reports.forEach(item=>{
+    const style = reportStyle[item.type] || {color:"#666", emoji:"•"};
+    const marker = L.circleMarker([item.lat,item.lng], {
+      radius:9, color:"#fff", weight:2, fillColor:style.color, fillOpacity:.95
+    });
+    marker.bindPopup(`
+      <div class="popup-title">${style.emoji} ${esc(item.type)}</div>
+      <div>${esc(item.location || "Reported location")}</div>
+      <div class="popup-meta">Community verified</div>
+    `);
+    marker.addTo(incidentLayer);
+  });
+
+  data.cameras.forEach(item=>{
+    const marker = L.marker([item.lat,item.lng], {
+      title:`Camera: ${item.location}`
+    });
+    const limit = item.speed_limit ? `${item.speed_limit} km/h` : "Speed unknown";
+    marker.bindPopup(`
+      <div class="popup-title">📷 ${esc(item.camera_type)} camera</div>
+      <div>${esc(item.location)}</div>
+      <div class="popup-meta">${esc(limit)} · confidence ${esc(item.confidence)}%</div>
+    `);
+    marker.addTo(cameraLayer);
+  });
+
+  byId("incidentBadge").textContent = `${data.reports.length} verified reports`;
+
+  proximitySettings = {
+    enabled: data.settings.proximity_alerts !== false,
+    voice: data.settings.voice_alerts !== false,
+    maxDistanceM: Number(data.settings.alert_distance_m || 1200),
+    urgentDistanceM: Number(data.settings.urgent_alert_distance_m || 400),
+    cooldownS: Number(data.settings.alert_repeat_cooldown_s || 300),
+    language: data.settings.voice_language || "en-GB",
+    defaultCountry: data.settings.default_country || "DE",
+    cameraWarningMode: data.settings.camera_warning_mode || "country_compliance"
+  };
+
+  proximityTargets = buildProximityTargets(data);
+  updateVoiceBadge();
+  evaluateProximityAlerts();
+
+  trafficConfigured = !!data.settings.traffic_available;
+  const adminTrafficEnabled = data.settings.traffic_layer !== false;
+  applyTrafficLayerState(adminTrafficEnabled);
+}
+
+function applyTrafficLayerState(adminTrafficEnabled=true){
+  const badge = byId("trafficBadge");
+  const legend = byId("trafficLegend");
+  if (!badge || !map) return;
+
+  if (!trafficConfigured){
+    if (trafficFlowLayer && map.hasLayer(trafficFlowLayer)) map.removeLayer(trafficFlowLayer);
+    if (trafficIncidentLayer && map.hasLayer(trafficIncidentLayer)) map.removeLayer(trafficIncidentLayer);
+    badge.textContent = "Traffic API not configured";
+    badge.classList.remove("on","off");
+    badge.classList.add("error");
+    legend && legend.classList.add("hidden");
+    return;
+  }
+
+  if (!adminTrafficEnabled){
+    if (trafficFlowLayer && map.hasLayer(trafficFlowLayer)) map.removeLayer(trafficFlowLayer);
+    if (trafficIncidentLayer && map.hasLayer(trafficIncidentLayer)) map.removeLayer(trafficIncidentLayer);
+    badge.textContent = "Traffic disabled by admin";
+    badge.classList.remove("on","error");
+    badge.classList.add("off");
+    legend && legend.classList.add("hidden");
+    return;
+  }
+
+  if (trafficEnabledByUser){
+    if (trafficFlowLayer && !map.hasLayer(trafficFlowLayer)) trafficFlowLayer.addTo(map);
+    if (trafficIncidentLayer && !map.hasLayer(trafficIncidentLayer)) trafficIncidentLayer.addTo(map);
+    badge.textContent = "Live Traffic ON";
+    badge.classList.remove("off","error");
+    badge.classList.add("on");
+    legend && legend.classList.remove("hidden");
+  }else{
+    if (trafficFlowLayer && map.hasLayer(trafficFlowLayer)) map.removeLayer(trafficFlowLayer);
+    if (trafficIncidentLayer && map.hasLayer(trafficIncidentLayer)) map.removeLayer(trafficIncidentLayer);
+    badge.textContent = "Traffic OFF";
+    badge.classList.remove("on","error");
+    badge.classList.add("off");
+    legend && legend.classList.add("hidden");
+  }
+}
+
+function toggleTrafficLayer(){
+  if (!trafficConfigured){
+    applyTrafficLayerState(true);
+    return;
+  }
+  trafficEnabledByUser = !trafficEnabledByUser;
+  applyTrafficLayerState(true);
+}
+
+async function refreshAllLiveData(){
+  await refreshMapData();
+  if (trafficConfigured && trafficEnabledByUser){
+    trafficFlowLayer && trafficFlowLayer.redraw();
+    trafficIncidentLayer && trafficIncidentLayer.redraw();
+  }
+}
+
+
+
+
+function bindDestinationSearchControls(){
+  const input = byId("destinationSearchInput");
+  const goBtn = byId("destinationSearchGoBtn");
+
+  if (!input || input.dataset.roadpulseSearchBound === "1"){
+    updateDestinationActionButton();
+    return;
+  }
+
+  input.dataset.roadpulseSearchBound = "1";
+  input.addEventListener("input", onDestinationSearchInput);
+  input.addEventListener("keydown", onDestinationSearchKeydown);
+  input.addEventListener("focus", ()=>{
+    if (!input.value.trim()) renderDestinationQuickList();
+  });
+
+  if (goBtn) goBtn.addEventListener("click", manualDestinationSearch);
+  updateDestinationActionButton();
+  console.log("RoadPulse destination search controls bound");
+}
+
+function updateDestinationActionButton(){
+  const btn = byId("destinationSearchGoBtn");
+  if (!btn) return;
+
+  const ready = !!navDestination && !navigationActive;
+  btn.textContent = ready ? "GO →" : "Search";
+  btn.title = ready ? "Start navigation" : "Search destination";
+  btn.classList.toggle("ready", ready);
+}
+
+async function manualDestinationSearch(){
+  const input = byId("destinationSearchInput");
+  if (!input) return;
+
+  if (navDestination && !navigationActive){
+    await startNavigation();
+    return;
+  }
+
+  const q = input.value.trim();
+  if (q.length < 2){
+    const box = byId("destinationResults");
+    if (box){
+      box.innerHTML = '<div class="destination-result"><div class="destination-result-icon">⌕</div><div><strong>Type at least 2 letters</strong><small>Example: Frankfurt Hbf</small></div></div>';
+      box.classList.remove("hidden");
+    }
+    return;
+  }
+
+  if (navSearchTimer){
+    clearTimeout(navSearchTimer);
+    navSearchTimer = null;
+  }
+
+  await searchDestinations(q);
+}
+
+function focusDestinationSearch(){
+  const input = byId("destinationSearchInput");
+  if (input){
+    input.focus();
+    input.select();
+
+    if (!input.value.trim()){
+      renderDestinationQuickList();
+    }
+  }
+}
+
+function onDestinationSearchKeydown(event){
+  if (event.key === "Escape"){
+    byId("destinationResults")?.classList.add("hidden");
+    return;
+  }
+
+  if (event.key === "Enter"){
+    event.preventDefault();
+    if (navSearchResults.length > 0){
+      chooseDestinationResult(0);
+    }else{
+      manualDestinationSearch();
+    }
+  }
+}
+
+function onDestinationSearchInput(){
+  const input = byId("destinationSearchInput");
+  const clearBtn = byId("clearDestinationBtn");
+  if (!input) return;
+
+  const q = input.value.trim();
+  if (navDestination && !navigationActive && q !== navDestination.name){
+    navDestination = null;
+    updateDestinationActionButton();
+  }
+  clearBtn?.classList.toggle("hidden", q.length === 0);
+
+  if (navSearchTimer){
+    clearTimeout(navSearchTimer);
+  }
+
+  if (q.length < 2){
+    navSearchResults = [];
+    byId("destinationResults")?.classList.add("hidden");
+    renderDestinationQuickList();
+    return;
+  }
+
+  byId("destinationQuickList")?.classList.add("hidden");
+
+  navSearchTimer = setTimeout(()=>{
+    searchDestinations(q);
+  }, 320);
+}
+
+async function searchDestinations(q){
+  const resultsBox = byId("destinationResults");
+  if (!resultsBox) return;
+
+  resultsBox.innerHTML =
+    '<div class="destination-result"><div class="destination-result-icon">…</div><div><strong>Searching</strong><small>Finding destinations near you</small></div></div>';
+  resultsBox.classList.remove("hidden");
+
+  const params = new URLSearchParams({
+    q,
+    limit:"6",
+    language: userLanguage || "en-GB"
+  });
+
+  if (currentPosition){
+    params.set("lat", currentPosition.lat);
+    params.set("lng", currentPosition.lng);
+  }
+
+  try{
+    const r = await fetch(
+      `/api/navigation/search?${params.toString()}`,
+      {credentials:"include"}
+    );
+
+    const data = await r.json().catch(()=>({}));
+
+    if (!r.ok){
+      throw new Error(data.detail || "Search failed");
+    }
+
+    navSearchResults = data.results || [];
+    renderDestinationResults();
+  }catch(err){
+    navSearchResults = [];
+    resultsBox.innerHTML =
+      `<div class="destination-result"><div class="destination-result-icon">!</div><div><strong>Search unavailable</strong><small>${esc(err.message || "Please try again")}</small></div></div>`;
+  }
+}
+
+function renderDestinationResults(){
+  const box = byId("destinationResults");
+  if (!box) return;
+
+  if (navSearchResults.length === 0){
+    box.innerHTML =
+      '<div class="destination-result"><div class="destination-result-icon">⌕</div><div><strong>No results</strong><small>Try a street, city or place name</small></div></div>';
+    box.classList.remove("hidden");
+    return;
+  }
+
+  box.innerHTML = navSearchResults.map((item,index)=>{
+    const saved = favoriteDestinations.some(x=>sameDestination(x,item));
+    return `
+      <div class="destination-result">
+        <button class="destination-result-icon" onclick="chooseDestinationResult(${index})">⌖</button>
+        <button class="destination-result-main" onclick="chooseDestinationResult(${index})" style="background:transparent;color:inherit;text-align:left;padding:0;border-radius:0">
+          <strong>${esc(item.name)}</strong>
+          <small>${esc(item.address || "")}</small>
+        </button>
+        <button
+          class="destination-result-save ${saved ? "saved" : ""}"
+          onclick="toggleFavoriteSearchResult(event,${index})"
+          title="Save destination"
+        >${saved ? "★" : "☆"}</button>
+      </div>
+    `;
+  }).join("");
+
+  box.classList.remove("hidden");
+}
+
+function chooseDestinationResult(index){
+  unlockNavigationAudio();
+  const item = navSearchResults[index];
+  if (!item) return;
+
+  navDestination = {
+    name:item.name,
+    address:item.address,
+    lat:Number(item.lat),
+    lng:Number(item.lng)
+  };
+
+  const input = byId("destinationSearchInput");
+  if (input) input.value = item.name;
+
+  byId("destinationResults")?.classList.add("hidden");
+  byId("destinationQuickList")?.classList.add("hidden");
+  byId("clearDestinationBtn")?.classList.remove("hidden");
+  rememberRecentDestination(navDestination);
+  updateDestinationActionButton();
+}
+
+function clearDestinationSearch(){
+  const input = byId("destinationSearchInput");
+  if (input) input.value = "";
+  navSearchResults = [];
+
+  if (navigationActive){
+    stopNavigation();
+  }else{
+    navDestination = null;
+    updateDestinationActionButton();
+  }
+
+  byId("destinationResults")?.classList.add("hidden");
+  byId("destinationQuickList")?.classList.add("hidden");
+  byId("clearDestinationBtn")?.classList.add("hidden");
+}
+
+async function startNavigation(){
+  if (!navDestination){
+    focusDestinationSearch();
+    return;
+  }
+
+  if (!currentPosition){
+    setGpsBadge("Waiting for GPS to start route…", false);
+    startGpsWatch();
+    return;
+  }
+
+  await calculateNavigationRoute(false);
+}
+
+async function calculateNavigationRoute(isReroute=false){
+  if (!currentPosition || !navDestination || navRequestInFlight){
+    return;
+  }
+
+  navRequestInFlight = true;
+
+  const search = byId("destinationSearchInput");
+  search?.closest(".destination-search")?.classList.add("navigation-loading");
+
+  try{
+    const r = await fetch("/api/navigation/route", {
+      method:"POST",
+      credentials:"include",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        origin_lat:currentPosition.lat,
+        origin_lng:currentPosition.lng,
+        destination_lat:navDestination.lat,
+        destination_lng:navDestination.lng,
+        destination_name:navDestination.name,
+        language:userLanguage || "en-GB",
+        travel_mode:navigationMode
+      })
+    });
+
+    const data = await r.json().catch(()=>({}));
+    if (!r.ok){
+      throw new Error(data.detail || "Could not calculate route");
+    }
+
+    applyNavigationRoute(data, isReroute);
+  }catch(err){
+    const card = byId("navigationCard");
+    if (card){
+      card.classList.remove("hidden");
+      byId("navManeuverIcon").textContent = "!";
+      byId("navInstruction").textContent = "Route unavailable";
+      byId("navInstructionDistance").textContent = "";
+      byId("navDestinationName").textContent =
+        err.message || "Please try again";
+    }
+  }finally{
+    navRequestInFlight = false;
+    search?.closest(".destination-search")?.classList.remove("navigation-loading");
+  }
+}
+
+function applyNavigationRoute(data, isReroute=false){
+  navRoute = data;
+  if (["car","pedestrian","bicycle"].includes(data.travelMode)) navigationMode = data.travelMode;
+  safeLocalSet("roadpulse_nav_mode", navigationMode);
+  navRoutePoints = data.points || [];
+  navInstructions = data.instructions || [];
+  navCurrentInstructionIndex = 0;
+  navLastProgressIndex = 0;
+  navInstructionAnnouncements.clear();
+  navigationActive = true;
+  navFollowMode = true;
+  updateDestinationActionButton();
+  navBaseSummary = data.summary || {};
+  navLastRerouteAt = Date.now();
+  navLastTrafficRefreshAt = Date.now();
+
+  document.body.classList.add("navigation-active");
+
+  if (navRouteLayer && map) map.removeLayer(navRouteLayer);
+  if (navRouteOutlineLayer && map) map.removeLayer(navRouteOutlineLayer);
+
+  const routeStyle = navigationMode === "pedestrian"
+    ? {color:"#076cff", weight:8, dashArray:null}
+    : navigationMode === "bicycle"
+      ? {color:"#008fb3", weight:8, dashArray:"13 7"}
+      : {color:"#6d28d9", weight:8, dashArray:null};
+
+  navRouteOutlineLayer = L.polyline(navRoutePoints, {
+    color:"#ffffff",
+    weight:routeStyle.weight + 6,
+    opacity:.96,
+    lineJoin:"round",
+    lineCap:"round",
+    dashArray:routeStyle.dashArray
+  }).addTo(map);
+
+  navRouteLayer = L.polyline(navRoutePoints, {
+    color:routeStyle.color,
+    weight:routeStyle.weight,
+    opacity:1,
+    lineJoin:"round",
+    lineCap:"round",
+    dashArray:routeStyle.dashArray
+  }).addTo(map);
+
+  if (!isReroute){
+    try{
+      map.fitBounds(navRouteLayer.getBounds(), {
+        padding:[70,70],
+        maxZoom:16
+      });
+    }catch(_){}
+  }
+
+  byId("navigationCard")?.classList.remove("hidden");
+  byId("routeSummaryCard")?.classList.remove("hidden");
+  byId("destinationResults")?.classList.add("hidden");
+  byId("destinationQuickList")?.classList.add("hidden");
+
+  updateNavigationModeUI();
+  updateFollowButton();
+  requestNavigationWakeLock();
+  updateRouteSummary(data.summary || {});
+  updateNavigationProgress();
+
+  if (isReroute && voiceEnabledByUser && proximitySettings.voice){
+    speakNavigationMessage(t("routeUpdated"));
+  }
+}
+
+function updateRouteSummary(summary){
+  byId("routeEta").textContent =
+    formatArrivalTime(summary.arrivalTime);
+
+  byId("routeDuration").textContent =
+    formatDuration(summary.travelTimeSeconds || 0);
+
+  byId("routeDistance").textContent =
+    formatRouteDistance(summary.lengthMeters || 0);
+
+  const delay = Number(summary.trafficDelaySeconds || 0);
+  byId("routeDelay").textContent = (navigationMode === "pedestrian" || navigationMode === "bicycle")
+    ? "—"
+    : (delay > 30 ? `+${formatDuration(delay)}` : "None");
+  updateNavigationModeUI();
+}
+
+function formatArrivalTime(value){
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleTimeString([], {
+    hour:"2-digit",
+    minute:"2-digit"
+  });
+}
+
+function formatDuration(seconds){
+  const mins = Math.max(0, Math.round(Number(seconds || 0) / 60));
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function formatRouteDistance(meters){
+  const m = Number(meters || 0);
+  if (m < 1000) return `${Math.round(m)} m`;
+  return `${(m/1000).toFixed(m < 10000 ? 1 : 0)} km`;
+}
+
+function stopNavigation(clearDestination=true){
+  navigationActive = false;
+  navRoute = null;
+  navRoutePoints = [];
+  navInstructions = [];
+  navCurrentInstructionIndex = 0;
+  navLastProgressIndex = 0;
+  navInstructionAnnouncements.clear();
+  navBaseSummary = null;
+  navFollowMode = true;
+  releaseNavigationWakeLock();
+
+  document.body.classList.remove("navigation-active");
+  document.body.classList.remove("walking-navigation");
+  document.body.classList.remove("cycling-navigation");
+  document.body.classList.remove("car-navigation");
+
+  if (navRouteLayer && map) map.removeLayer(navRouteLayer);
+  if (navRouteOutlineLayer && map) map.removeLayer(navRouteOutlineLayer);
+  navRouteLayer = null;
+  navRouteOutlineLayer = null;
+
+  byId("navigationCard")?.classList.add("hidden");
+  byId("routeSummaryCard")?.classList.add("hidden");
+
+  if (clearDestination){
+    navDestination = null;
+    const input = byId("destinationSearchInput");
+    if (input) input.value = "";
+    byId("clearDestinationBtn")?.classList.add("hidden");
+  }
+  updateDestinationActionButton();
+}
+
+async function manualReroute(){
+  if (!navigationActive || !navDestination) return;
+  navLastRerouteAt = 0;
+  await calculateNavigationRoute(true);
+}
+
+function updateNavigationProgress(){
+  if (
+    !navigationActive ||
+    !currentPosition ||
+    navRoutePoints.length < 2
+  ){
+    return;
+  }
+
+  const nearest = nearestRoutePoint(
+    currentPosition.lat,
+    currentPosition.lng
+  );
+
+  if (!nearest) return;
+
+  navLastProgressIndex = Math.max(
+    navLastProgressIndex,
+    nearest.index
+  );
+
+  updateRemainingRouteSummary();
+
+  const nextIndex = findNextInstructionIndex(navLastProgressIndex);
+  if (nextIndex >= 0){
+    navCurrentInstructionIndex = nextIndex;
+    const instruction = navInstructions[nextIndex];
+    renderNavigationInstruction(instruction);
+    maybeSpeakTurnInstruction(instruction, nextIndex);
+  }
+
+  const now = Date.now();
+  const speed = Number(currentPosition.speed || 0);
+
+  const walking = navigationMode === "pedestrian";
+  const cycling = navigationMode === "bicycle";
+  const offRouteDistance = walking ? 45 : (cycling ? 65 : 120);
+  const movementThreshold = walking ? 0.35 : (cycling ? 1.0 : 2.5);
+  const rerouteCooldown = walking ? 20000 : (cycling ? 25000 : 35000);
+
+  // Automatic off-route reroute, tuned separately for walking and driving.
+  if (
+    nearest.distanceM > offRouteDistance &&
+    speed > movementThreshold &&
+    now - navLastRerouteAt > rerouteCooldown
+  ){
+    calculateNavigationRoute(true);
+    return;
+  }
+
+  // Live traffic refresh is useful for driving; pedestrian routes don't need it.
+  if (
+    !walking && !cycling &&
+    speed > 2.5 &&
+    now - navLastTrafficRefreshAt > 180000
+  ){
+    navLastTrafficRefreshAt = now;
+    calculateNavigationRoute(true);
+  }
+
+  // Arrival detection.
+  const destinationDistance = haversineMeters(
+    currentPosition.lat,
+    currentPosition.lng,
+    navDestination.lat,
+    navDestination.lng
+  );
+
+  if (destinationDistance < (navigationMode === "pedestrian" ? 22 : (navigationMode === "bicycle" ? 25 : 35))){
+    byId("navManeuverIcon").textContent = "✓";
+    byId("navInstruction").textContent = t("arrived");
+    byId("navInstructionDistance").textContent = "";
+    byId("navDestinationName").textContent = navDestination.name;
+
+    const arrivalKey = "arrival";
+    if (
+      !navInstructionAnnouncements.has(arrivalKey) &&
+      voiceEnabledByUser &&
+      proximitySettings.voice
+    ){
+      navInstructionAnnouncements.add(arrivalKey);
+      speakNavigationMessage(t("arrived"));
+    }
+  }
+}
+
+function nearestRoutePoint(lat,lng){
+  if (navRoutePoints.length === 0) return null;
+
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+
+  // Search the whole route. TomTom route polylines are normally manageable,
+  // and this keeps the implementation robust after a reroute.
+  for (let i=0; i<navRoutePoints.length; i++){
+    const p = navRoutePoints[i];
+    const d = haversineMeters(lat,lng,p[0],p[1]);
+    if (d < bestDistance){
+      bestDistance = d;
+      bestIndex = i;
+    }
+  }
+
+  return {index:bestIndex, distanceM:bestDistance};
+}
+
+function findNextInstructionIndex(progressIndex){
+  if (navInstructions.length === 0) return -1;
+
+  for (let i=0; i<navInstructions.length; i++){
+    const instruction = navInstructions[i];
+    if (Number(instruction.pointIndex || 0) >= progressIndex){
+      return i;
+    }
+  }
+
+  return navInstructions.length - 1;
+}
+
+function renderNavigationInstruction(instruction){
+  if (!instruction) return;
+
+  const distance = (
+    instruction.lat != null &&
+    instruction.lng != null
+  )
+    ? haversineMeters(
+        currentPosition.lat,
+        currentPosition.lng,
+        Number(instruction.lat),
+        Number(instruction.lng)
+      )
+    : 0;
+
+  byId("navManeuverIcon").textContent =
+    maneuverIcon(instruction.maneuver);
+
+  byId("navInstruction").textContent =
+    instruction.message || "Continue";
+
+  byId("navInstructionDistance").textContent =
+    distance > 0 ? formatDistance(distance) : "";
+
+  const roadName = getInstructionRoadName(instruction);
+  const nextRoad = byId("navNextRoad");
+  if (nextRoad){
+    nextRoad.textContent = roadName || "—";
+  }
+
+  byId("navDestinationName").textContent =
+    navDestination?.name || t("destination");
+}
+
+function maneuverIcon(maneuver){
+  const icons = {
+    TURN_LEFT:"↰",
+    SHARP_LEFT:"↶",
+    BEAR_LEFT:"↖",
+    KEEP_LEFT:"↖",
+    TURN_RIGHT:"↱",
+    SHARP_RIGHT:"↷",
+    BEAR_RIGHT:"↗",
+    KEEP_RIGHT:"↗",
+    STRAIGHT:"↑",
+    FOLLOW:"↑",
+    ENTER_MOTORWAY:"⇧",
+    ENTER_FREEWAY:"⇧",
+    ENTER_HIGHWAY:"⇧",
+    ENTRANCE_RAMP:"↗",
+    TAKE_EXIT:"↗",
+    MOTORWAY_EXIT_LEFT:"↖",
+    MOTORWAY_EXIT_RIGHT:"↗",
+    MAKE_UTURN:"↶",
+    TRY_MAKE_UTURN:"↶",
+    ROUNDABOUT_LEFT:"⟲",
+    ROUNDABOUT_RIGHT:"⟳",
+    ROUNDABOUT_CROSS:"⟳",
+    ARRIVE:"✓",
+    ARRIVE_LEFT:"✓",
+    ARRIVE_RIGHT:"✓",
+    DEPART:"↑"
+  };
+  return icons[maneuver] || "↑";
+}
+
+
+function getInstructionRoadName(instruction){
+  if (!instruction) return "";
+
+  if (instruction.street){
+    return String(instruction.street);
+  }
+
+  if (Array.isArray(instruction.roadNumbers) && instruction.roadNumbers.length){
+    return instruction.roadNumbers.join(" / ");
+  }
+
+  if (instruction.exitNumber){
+    return `Exit ${instruction.exitNumber}`;
+  }
+
+  return "";
+}
+
+function getNavigationAudioContext(){
+  if (navAudioContext) return navAudioContext;
+
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return null;
+
+  try{
+    navAudioContext = new AudioCtx();
+  }catch(_){
+    return null;
+  }
+
+  return navAudioContext;
+}
+
+async function unlockNavigationAudio(){
+  const ctx = getNavigationAudioContext();
+  if (!ctx) return;
+
+  try{
+    if (ctx.state === "suspended"){
+      await ctx.resume();
+    }
+  }catch(_){}
+}
+
+function playNavigationChime(kind="normal"){
+  const ctx = getNavigationAudioContext();
+  if (!ctx || ctx.state !== "running") return;
+
+  const now = ctx.currentTime;
+  const notes = kind === "urgent"
+    ? [{f:880,t:0,d:.10},{f:1175,t:.13,d:.13}]
+    : [{f:660,t:0,d:.10},{f:880,t:.13,d:.12}];
+
+  for (const note of notes){
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(note.f, now + note.t);
+
+    gain.gain.setValueAtTime(0.0001, now + note.t);
+    gain.gain.exponentialRampToValueAtTime(0.12, now + note.t + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + note.t + note.d);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now + note.t);
+    osc.stop(now + note.t + note.d + 0.03);
+  }
+}
+
+function navigationVoiceMessage(instruction, threshold){
+  const base = instruction?.message || "Continue";
+  const road = getInstructionRoadName(instruction);
+
+  // TomTom's localized instruction often already contains the road.
+  // Only append it if the road name isn't already present.
+  let message = base;
+  if (
+    road &&
+    !String(base).toLowerCase().includes(String(road).toLowerCase())
+  ){
+    message = `${base}. ${t("nextRoad")}: ${road}.`;
+  }
+
+  if (threshold <= (navigationMode === "pedestrian" ? 25 : (navigationMode === "bicycle" ? 35 : 70))){
+    return message;
+  }
+
+  return `${localizedInMeters(threshold)}, ${message}`;
+}
+
+function maybeSpeakTurnInstruction(instruction,index){
+  if (
+    !instruction ||
+    !voiceEnabledByUser ||
+    !proximitySettings.voice ||
+    instruction.lat == null ||
+    instruction.lng == null
+  ){
+    return;
+  }
+
+  const distance = haversineMeters(
+    currentPosition.lat,
+    currentPosition.lng,
+    Number(instruction.lat),
+    Number(instruction.lng)
+  );
+
+  let threshold = null;
+  if (navigationMode === "pedestrian"){
+    if (distance <= 25) threshold = 25;
+    else if (distance <= 80) threshold = 80;
+    else if (distance <= 200) threshold = 200;
+  }else if (navigationMode === "bicycle"){
+    if (distance <= 35) threshold = 35;
+    else if (distance <= 120) threshold = 120;
+    else if (distance <= 350) threshold = 350;
+  }else{
+    if (distance <= 70) threshold = 70;
+    else if (distance <= 250) threshold = 250;
+    else if (distance <= 700) threshold = 700;
+  }
+
+  if (threshold == null) return;
+
+  const key = `${index}:${threshold}`;
+  if (navInstructionAnnouncements.has(key)) return;
+
+  navInstructionAnnouncements.add(key);
+
+  // Chime before every new road-change/turn announcement.
+  playNavigationChime(threshold <= (navigationMode === "pedestrian" ? 25 : (navigationMode === "bicycle" ? 35 : 70)) ? "urgent" : "normal");
+
+  const message = navigationVoiceMessage(instruction,threshold);
+  setTimeout(()=>{
+    speakNavigationMessage(message);
+  }, 330);
+}
+
+function speakNavigationMessage(message){
+  if (
+    !message ||
+    !voiceEnabledByUser ||
+    !proximitySettings.voice ||
+    !("speechSynthesis" in window)
+  ){
+    return;
+  }
+
+  const u = new SpeechSynthesisUtterance(message);
+  u.lang = userLanguage || "en-GB";
+  u.rate = 1.0;
+  u.pitch = 1.0;
+
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+
+
+
+function rememberRecentDestination(destination){
+  if (!destination) return;
+
+  recentDestinations = [
+    destination,
+    ...recentDestinations.filter(x=>!sameDestination(x,destination))
+  ].slice(0,6);
+
+  saveStoredDestinations("roadpulse_recent", recentDestinations);
+}
+
+function toggleFavoriteSearchResult(event,index){
+  event?.stopPropagation();
+  const item = navSearchResults[index];
+  if (!item) return;
+
+  const destination = {
+    name:item.name,
+    address:item.address,
+    lat:Number(item.lat),
+    lng:Number(item.lng)
+  };
+
+  toggleFavoriteDestination(destination);
+  renderDestinationResults();
+}
+
+function toggleFavoriteDestination(destination){
+  const existingIndex =
+    favoriteDestinations.findIndex(x=>sameDestination(x,destination));
+
+  if (existingIndex >= 0){
+    favoriteDestinations.splice(existingIndex,1);
+  }else{
+    favoriteDestinations.unshift(destination);
+  }
+
+  favoriteDestinations = favoriteDestinations.slice(0,10);
+  saveStoredDestinations("roadpulse_favorites", favoriteDestinations);
+  renderDestinationQuickList();
+}
+
+function saveCurrentDestination(){
+  if (!navDestination) return;
+
+  const saved =
+    favoriteDestinations.some(x=>sameDestination(x,navDestination));
+
+  toggleFavoriteDestination(navDestination);
+
+  if (
+    voiceEnabledByUser &&
+    proximitySettings.voice
+  ){
+    speakNavigationMessage(
+      saved
+        ? "Destination removed from saved places."
+        : "Destination saved."
+    );
+  }
+}
+
+function renderDestinationQuickList(){
+  const box = byId("destinationQuickList");
+  if (!box) return;
+
+  const items = [];
+  favoriteDestinations.slice(0,5).forEach(item=>{
+    items.push({...item,_kind:"favorite"});
+  });
+
+  recentDestinations
+    .filter(item=>!favoriteDestinations.some(x=>sameDestination(x,item)))
+    .slice(0,5)
+    .forEach(item=>{
+      items.push({...item,_kind:"recent"});
+    });
+
+  if (items.length === 0){
+    box.classList.add("hidden");
+    return;
+  }
+
+  box.innerHTML = items.map((item,index)=>`
+    <button
+      class="quick-destination-chip ${item._kind === "favorite" ? "favorite" : ""}"
+      onclick="chooseQuickDestination(${index})"
+      title="${esc(item.address || item.name)}"
+    >
+      ${item._kind === "favorite" ? "★" : "↺"}
+      ${esc(item.name)}
+    </button>
+  `).join("");
+
+  box.dataset.items = JSON.stringify(items);
+  box.classList.remove("hidden");
+}
+
+function chooseQuickDestination(index){
+  unlockNavigationAudio();
+  const box = byId("destinationQuickList");
+  if (!box) return;
+
+  let items = [];
+  try{ items = JSON.parse(box.dataset.items || "[]"); }catch(_){}
+
+  const item = items[index];
+  if (!item) return;
+
+  navDestination = {
+    name:item.name,
+    address:item.address,
+    lat:Number(item.lat),
+    lng:Number(item.lng)
+  };
+
+  const input = byId("destinationSearchInput");
+  if (input) input.value = navDestination.name;
+
+  box.classList.add("hidden");
+  byId("clearDestinationBtn")?.classList.remove("hidden");
+  rememberRecentDestination(navDestination);
+  updateDestinationActionButton();
+}
+
+function enableRouteFollow(){
+  navFollowMode = true;
+  updateFollowButton();
+
+  if (currentPosition && map){
+    map.setView(
+      [currentPosition.lat,currentPosition.lng],
+      navigationMode === "pedestrian" ? 18 : 17,
+      {animate:true}
+    );
+  }
+}
+
+function showRouteOverview(){
+  navFollowMode = false;
+  updateFollowButton();
+
+  if (navRouteLayer && map){
+    try{
+      map.fitBounds(navRouteLayer.getBounds(),{
+        padding:[70,70],
+        maxZoom:16
+      });
+    }catch(_){}
+  }
+}
+
+function updateFollowButton(){
+  const btn = byId("followRouteBtn");
+  if (!btn) return;
+  btn.classList.toggle("active", navFollowMode);
+  btn.textContent = navFollowMode ? `◎ ${t("follow")}` : `◎ ${t("followOff")}`;
+  updateRouteControlLabels();
+}
+
+async function requestNavigationWakeLock(){
+  if (
+    !navigationActive &&
+    !navDestination
+  ){
+    return;
+  }
+
+  if (
+    !("wakeLock" in navigator) ||
+    document.visibilityState !== "visible"
+  ){
+    return;
+  }
+
+  try{
+    if (!navWakeLock){
+      navWakeLock = await navigator.wakeLock.request("screen");
+      navWakeLock.addEventListener("release",()=>{
+        navWakeLock = null;
+      });
+    }
+  }catch(_){}
+}
+
+async function releaseNavigationWakeLock(){
+  try{
+    if (navWakeLock){
+      await navWakeLock.release();
+    }
+  }catch(_){}
+  navWakeLock = null;
+}
+
+function calculateRemainingRouteMeters(){
+  if (
+    !navRoutePoints ||
+    navRoutePoints.length < 2
+  ){
+    return 0;
+  }
+
+  let total = 0;
+  const start = Math.max(
+    0,
+    Math.min(navLastProgressIndex,navRoutePoints.length-1)
+  );
+
+  if (currentPosition){
+    const p = navRoutePoints[start];
+    total += haversineMeters(
+      currentPosition.lat,
+      currentPosition.lng,
+      p[0],
+      p[1]
+    );
+  }
+
+  for (let i=start; i<navRoutePoints.length-1; i++){
+    const a = navRoutePoints[i];
+    const b = navRoutePoints[i+1];
+    total += haversineMeters(a[0],a[1],b[0],b[1]);
+  }
+
+  return total;
+}
+
+function updateRemainingRouteSummary(){
+  if (!navigationActive || !navBaseSummary) return;
+
+  const remainingMeters = calculateRemainingRouteMeters();
+  const totalMeters = Number(navBaseSummary.lengthMeters || 0);
+  const totalSeconds = Number(navBaseSummary.travelTimeSeconds || 0);
+  const totalDelay = Number(navBaseSummary.trafficDelaySeconds || 0);
+
+  const ratio =
+    totalMeters > 0
+      ? Math.max(0,Math.min(1,remainingMeters/totalMeters))
+      : 1;
+
+  const remainingSeconds = Math.round(totalSeconds * ratio);
+  const remainingDelay = Math.round(totalDelay * ratio);
+
+  byId("routeDistance").textContent =
+    formatRouteDistance(remainingMeters);
+
+  byId("routeDuration").textContent =
+    formatDuration(remainingSeconds);
+
+  byId("routeDelay").textContent = (navigationMode === "pedestrian" || navigationMode === "bicycle")
+    ? "—"
+    : (remainingDelay > 30 ? `+${formatDuration(remainingDelay)}` : "None");
+
+  const arrival = new Date(Date.now() + remainingSeconds*1000);
+  byId("routeEta").textContent =
+    arrival.toLocaleTimeString([],{
+      hour:"2-digit",
+      minute:"2-digit"
+    });
+}
+
+function buildProximityTargets(data){
+  const targets = [];
+
+  (data.reports || []).forEach(item=>{
+    if (item.lat == null || item.lng == null) return;
+
+    // Camera reports are treated as camera alerts for compliance.
+    if (item.type === "camera" && !cameraVoiceAlertsAllowed()) return;
+
+    targets.push({
+      id:`report:${item.id}`,
+      type:item.type,
+      lat:Number(item.lat),
+      lng:Number(item.lng),
+      location:item.location || "Verified community report",
+      source:"community"
+    });
+  });
+
+  if (cameraVoiceAlertsAllowed()){
+    (data.cameras || []).forEach(item=>{
+      if (item.lat == null || item.lng == null) return;
+      targets.push({
+        id:`camera:${item.id}`,
+        type:"camera",
+        lat:Number(item.lat),
+        lng:Number(item.lng),
+        location:item.location || "Camera",
+        source:"camera"
+      });
+    });
+  }
+
+  return targets;
+}
+
+function cameraVoiceAlertsAllowed(){
+  const country = String(proximitySettings.defaultCountry || "").toUpperCase();
+  const mode = proximitySettings.cameraWarningMode;
+
+  // Compliance safeguard: in Germany, country-compliance mode suppresses
+  // automated camera proximity voice alerts.
+  if (mode === "country_compliance" && country === "DE"){
+    return false;
+  }
+  return true;
+}
+
+function haversineMeters(lat1,lng1,lat2,lng2){
+  const R = 6371000;
+  const rad = d => d * Math.PI / 180;
+  const p1 = rad(lat1);
+  const p2 = rad(lat2);
+  const dp = rad(lat2-lat1);
+  const dl = rad(lng2-lng1);
+  const a =
+    Math.sin(dp/2) ** 2 +
+    Math.cos(p1) * Math.cos(p2) * Math.sin(dl/2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function bearingDegrees(lat1,lng1,lat2,lng2){
+  const rad = d => d * Math.PI / 180;
+  const deg = r => r * 180 / Math.PI;
+  const p1 = rad(lat1);
+  const p2 = rad(lat2);
+  const dl = rad(lng2-lng1);
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1)*Math.sin(p2) -
+            Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
+  return (deg(Math.atan2(y,x)) + 360) % 360;
+}
+
+function angleDifference(a,b){
+  return Math.abs(((a - b + 540) % 360) - 180);
+}
+
+function targetIsAhead(target){
+  const heading = currentPosition?.heading;
+  const speed = currentPosition?.speed;
+
+  // At low speed or when heading is unavailable, use radius-only detection.
+  if (heading == null || heading < 0 || speed == null || speed < 4.2){
+    return true;
+  }
+
+  const bearing = bearingDegrees(
+    currentPosition.lat,
+    currentPosition.lng,
+    target.lat,
+    target.lng
+  );
+
+  // Roughly the forward 180-degree field.
+  return angleDifference(heading, bearing) <= 90;
+}
+
+function evaluateProximityAlerts(){
+  const card = byId("proximityAlertCard");
+  const nearbyBadge = byId("nearbyBadge");
+
+  if (!card || !currentPosition || !proximitySettings.enabled){
+    if (card) card.classList.add("hidden");
+    if (nearbyBadge) nearbyBadge.textContent = "Nearby: waiting GPS";
+    currentProximityTarget = null;
+    return;
+  }
+
+  let nearest = null;
+  const now = Date.now();
+
+  for (const target of proximityTargets){
+    const dismissed = dismissedUntil.get(target.id) || 0;
+    if (dismissed > now) continue;
+
+    const distanceM = haversineMeters(
+      currentPosition.lat,
+      currentPosition.lng,
+      target.lat,
+      target.lng
+    );
+
+    if (distanceM > proximitySettings.maxDistanceM) continue;
+
+    // Only apply "ahead of vehicle" filtering when actually moving.
+    if (!targetIsAhead(target)) continue;
+
+    if (!nearest || distanceM < nearest.distanceM){
+      nearest = {...target, distanceM};
+    }
+  }
+
+  if (!nearest){
+    card.classList.add("hidden");
+    if (nearbyBadge){
+      nearbyBadge.textContent =
+        `Nearby: none < ${Math.round(proximitySettings.maxDistanceM)}m`;
+    }
+    currentProximityTarget = null;
+    return;
+  }
+
+  if (nearbyBadge){
+    nearbyBadge.textContent =
+      `Nearby: ${nearest.type} ${formatDistance(nearest.distanceM)}`;
+    nearbyBadge.classList.add("good");
+  }
+
+  currentProximityTarget = nearest;
+  renderProximityAlert(nearest);
+  maybeSpeakProximityAlert(nearest);
+}
+
+function renderProximityAlert(target){
+  const card = byId("proximityAlertCard");
+  if (!card) return;
+
+  const style = reportStyle[target.type] || {emoji:"⚠️"};
+
+  byId("proximityAlertIcon").textContent = style.emoji || "⚠️";
+  byId("proximityAlertTitle").textContent = alertTitleForType(target.type);
+  byId("proximityAlertDistance").textContent = formatDistance(target.distanceM);
+  byId("proximityAlertLocation").textContent =
+    target.location || "Verified nearby report";
+
+  card.classList.remove("hidden");
+  card.classList.toggle(
+    "urgent",
+    target.distanceM <= proximitySettings.urgentDistanceM
+  );
+}
+
+function alertTitleForType(type){
+  return localizedAlertTitle(type);
+}
+
+function formatDistance(meters){
+  if (meters < 1000){
+    return `${Math.max(10, Math.round(meters/10)*10)} m`;
+  }
+  return `${(meters/1000).toFixed(1)} km`;
+}
+
+function voiceMessageForTarget(target){
+  const d = Math.max(50, Math.round(target.distanceM/50)*50);
+  return `${localizedAlertTitle(target.type)} ${localizedInMeters(d)}.`;
+}
+
+function maybeSpeakProximityAlert(target){
+  if (
+    !voiceEnabledByUser ||
+    !proximitySettings.voice ||
+    !("speechSynthesis" in window)
+  ){
+    return;
+  }
+
+  const now = Date.now();
+  const previous = lastAlertedAt.get(target.id) || 0;
+  const cooldownMs = proximitySettings.cooldownS * 1000;
+
+  if (now - previous < cooldownMs){
+    return;
+  }
+
+  lastAlertedAt.set(target.id, now);
+
+  const utterance = new SpeechSynthesisUtterance(
+    voiceMessageForTarget(target)
+  );
+  utterance.lang = userLanguage || "en-GB";
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(utterance);
+}
+
+function toggleVoiceAlerts(){
+  unlockNavigationAudio();
+  voiceEnabledByUser = !voiceEnabledByUser;
+  safeLocalSet(
+    "roadpulse_voice",
+    voiceEnabledByUser ? "on" : "off"
+  );
+
+  if ("speechSynthesis" in window){
+    window.speechSynthesis.cancel();
+
+    // A user click helps browsers unlock speech output.
+    if (voiceEnabledByUser && proximitySettings.voice){
+      const u = new SpeechSynthesisUtterance(t("voiceEnabled"));
+      u.lang = userLanguage || "en-GB";
+      u.rate = 1.0;
+      window.speechSynthesis.speak(u);
+    }
+  }
+
+  updateVoiceBadge();
+}
+
+function updateVoiceBadge(){
+  const badge = byId("voiceBadge");
+  if (!badge) return;
+
+  const effectiveOn =
+    voiceEnabledByUser &&
+    proximitySettings.voice;
+
+  badge.textContent =
+    effectiveOn
+      ? `🔊 ${t("voiceOn")}`
+      : `🔇 ${t("voiceOff")}`;
+
+  badge.classList.toggle("off", !effectiveOn);
+}
+
+function dismissCurrentAlert(){
+  if (!currentProximityTarget) return;
+
+  // Hide this alert for 10 minutes on this device.
+  dismissedUntil.set(
+    currentProximityTarget.id,
+    Date.now() + 10 * 60 * 1000
+  );
+
+  byId("proximityAlertCard")?.classList.add("hidden");
+  currentProximityTarget = null;
+}
+
+function openReportSheet(){
+  const el = byId("reportSheet");
+  el.classList.remove("hidden");
+  byId("reportMsg").classList.add("hidden");
+}
+
+function closeReportSheet(){
+  byId("reportSheet").classList.add("hidden");
+}
+
+async function submitReport(type){
+  const msg = byId("reportMsg");
+  msg.classList.add("hidden");
+
+  if (!currentPosition){
+    msg.textContent = "GPS location is not ready yet. Allow location access and try again.";
+    msg.classList.remove("hidden","error");
+    msg.classList.add("error");
+    startGpsWatch();
+    return;
+  }
+
+  const r = await fetch("/api/reports", {
+    method:"POST", credentials:"include",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      type,
+      lat:currentPosition.lat,
+      lng:currentPosition.lng,
+      location:"User GPS report"
+    })
+  });
+
+  const data = await r.json().catch(()=>({}));
+  if (!r.ok){
+    msg.textContent = data.detail || "Could not submit report.";
+    msg.classList.remove("hidden");
+    msg.classList.add("error");
+    return;
+  }
+
+  msg.textContent = `${type} report sent for admin/community verification.`;
+  msg.classList.remove("hidden","error");
+  setTimeout(closeReportSheet, 1400);
+}
+
+function esc(v){
+  return String(v ?? "").replace(/[&<>"']/g,s=>({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+  })[s]);
+}
+
+/* ---------------- Admin ---------------- */
+
+async function adminLogin(){
+  const r = await fetch("/api/admin/login", {
+    method:"POST", credentials:"include",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({password:byId("adminPassword").value})
+  });
+
+  if (!r.ok){
+    const msg = byId("adminLoginMsg");
+    msg.textContent = "Admin login failed.";
+    msg.classList.remove("hidden");
+    msg.classList.add("error");
+    return;
+  }
+
+  byId("adminPassword").value = "";
+  await loadAdmin();
+}
+
+async function adminLogout(){
+  await fetch("/api/admin/logout", {method:"POST",credentials:"include"});
+  location.hash = "";
+  showOnly("userAuthView");
+  routeByHash();
+}
+
+async function loadAdmin(){
+  const r = await fetch("/api/admin/dashboard", {credentials:"include"});
+  if (!r.ok){
+    showOnly("adminLoginView");
+    return;
+  }
+  adminData = await r.json();
+  showOnly("adminView");
+  renderAdmin();
+}
+
+function renderAdmin(){
+  const c = adminData.counts;
+  byId("statIncidents").textContent = c.live_incidents;
+  byId("statPending").textContent = c.pending_reports;
+  byId("statCameras").textContent = c.camera_count;
+  byId("statUsers").textContent = c.active_users;
+  renderSettings();
+  renderReports();
+  renderCameras();
+  renderUsers();
+}
+
+const settingDescriptions = {
+  voice_alerts:"Master switch for supported voice alerts.",
+  background_driving_mode:"Native driving mode may keep location active while driving.",
+  community_reports:"Accept community reports.",
+  camera_layer:"Show camera data where permitted.",
+  traffic_layer:"Show live traffic when a provider is connected.",
+  hazard_layer:"Show hazards/roadworks.",
+  admin_2fa_required:"Require owner second factor.",
+  default_country:"Fallback jurisdiction.",
+  camera_warning_mode:"Apply country-by-country camera rules.",
+  app_name:"Public display name.",
+  proximity_alerts:"Show nearby verified road alerts.",
+  alert_distance_m:"Maximum proximity alert distance.",
+  urgent_alert_distance_m:"Urgent warning distance.",
+  alert_repeat_cooldown_s:"Repeat voice alert cooldown.",
+  voice_language:"Fallback browser speech language."
+};
+
+function boolRow(k,v){
+  return `<div class="setting-row">
+    <div class="meta"><strong>${esc(k.replaceAll("_"," "))}</strong>
+    <small>${esc(settingDescriptions[k]||"")}</small></div>
+    <div class="switch ${v?"on":""}" onclick="updateSetting('${k}',${!v})"></div>
+  </div>`;
+}
+function scalarRow(k,v){
+  return `<div class="setting-row">
+    <div class="meta"><strong>${esc(k.replaceAll("_"," "))}</strong>
+    <small>${esc(settingDescriptions[k]||"")}</small></div>
+    <input style="max-width:260px" value="${esc(v)}" onchange="updateSetting('${k}',this.value)">
+  </div>`;
+}
+function renderSettings(){
+  const s=adminData.settings;
+  const q=["voice_alerts","background_driving_mode","community_reports","camera_layer","traffic_layer","hazard_layer","proximity_alerts"];
+  byId("quickSettings").innerHTML=q.map(k=>typeof s[k]==="boolean"?boolRow(k,s[k]):scalarRow(k,s[k])).join("");
+  byId("allSettings").innerHTML=Object.entries(s).map(([k,v])=>typeof v==="boolean"?boolRow(k,v):scalarRow(k,v)).join("");
+}
+async function updateSetting(k,v){
+  const r=await fetch(`/api/admin/settings/${encodeURIComponent(k)}`,{
+    method:"PUT",credentials:"include",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({value:v})
+  });
+  if(r.ok){adminData.settings[k]=v;renderSettings()}
+}
+
+function renderReports(){
+  const rows=adminData.reports.map(r=>`<tr>
+    <td>${esc(r.type)}</td>
+    <td>${esc(r.location)}</td>
+    <td>${esc(r.reported_by)}</td>
+    <td>${r.lat != null ? Number(r.lat).toFixed(5) : "—"}</td>
+    <td>${r.lng != null ? Number(r.lng).toFixed(5) : "—"}</td>
+    <td><span class="status ${esc(r.status)}">${esc(r.status)}</span></td>
+    <td class="row-actions">
+      <button onclick="setReportStatus(${r.id},'verified')">Verify</button>
+      <button onclick="setReportStatus(${r.id},'pending')">Pending</button>
+      <button class="reject" onclick="setReportStatus(${r.id},'rejected')">Reject</button>
+    </td>
+  </tr>`).join("");
+
+  byId("reportsTable").innerHTML=`<table>
+    <thead><tr><th>Type</th><th>Location</th><th>Reporter</th><th>Lat</th><th>Lng</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+async function setReportStatus(id,status){
+  const r=await fetch(`/api/admin/reports/${id}/status`,{
+    method:"PUT",credentials:"include",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({status})
+  });
+  if(r.ok)await loadAdmin();
+}
+
+function renderCameras(){
+  const rows=adminData.cameras.map(c=>`<tr>
+    <td>${esc(c.camera_type)}</td><td>${esc(c.location)}</td>
+    <td>${esc(c.speed_limit??"—")}</td><td>${esc(c.confidence)}%</td>
+    <td>${c.lat != null ? Number(c.lat).toFixed(5) : "—"}</td>
+    <td>${c.lng != null ? Number(c.lng).toFixed(5) : "—"}</td>
+    <td>${c.enabled?"Enabled":"Disabled"}</td>
+    <td><button class="reject" onclick="deleteCamera(${c.id})">Delete</button></td>
+  </tr>`).join("");
+
+  byId("cameraTable").innerHTML=`<table>
+    <thead><tr><th>Type</th><th>Location</th><th>Limit</th><th>Confidence</th><th>Lat</th><th>Lng</th><th>State</th><th></th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+async function addCamera(){
+  const payload={
+    camera_type:byId("cameraType").value,
+    location:byId("cameraLocation").value,
+    speed_limit:byId("cameraSpeed").value?Number(byId("cameraSpeed").value):null,
+    confidence:Number(byId("cameraConfidence").value||50),
+    lat:byId("cameraLat").value?Number(byId("cameraLat").value):null,
+    lng:byId("cameraLng").value?Number(byId("cameraLng").value):null,
+    enabled:true
+  };
+
+  const r=await fetch("/api/admin/cameras",{
+    method:"POST",credentials:"include",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(payload)
+  });
+
+  if(r.ok){
+    ["cameraLocation","cameraSpeed","cameraLat","cameraLng"].forEach(id=>byId(id).value="");
+    await loadAdmin();
+  }
+}
+
+async function deleteCamera(id){
+  const r=await fetch(`/api/admin/cameras/${id}`,{
+    method:"DELETE",credentials:"include"
+  });
+  if(r.ok)await loadAdmin();
+}
+
+function renderUsers(){
+  const staffRows=(adminData.users||[]).map(u=>`<tr>
+    <td>${esc(u.name)}</td><td>${esc(u.role)}</td><td>${u.active?"Active":"Disabled"}</td>
+  </tr>`).join("");
+  byId("usersTable").innerHTML=`<table>
+    <thead><tr><th>Name</th><th>Role</th><th>Status</th></tr></thead>
+    <tbody>${staffRows}</tbody>
+  </table>`;
+
+  const appRows=(adminData.app_users||[]).map(u=>`<tr>
+    <td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${u.active?"Active":"Disabled"}</td>
+  </tr>`).join("");
+  byId("appUsersTable").innerHTML=`<table>
+    <thead><tr><th>Name</th><th>Email</th><th>Status</th></tr></thead>
+    <tbody>${appRows || '<tr><td colspan="3">No registered app users yet.</td></tr>'}</tbody>
+  </table>`;
+}
+
+document.querySelectorAll(".nav").forEach(btn=>{
+  btn.addEventListener("click",()=>{
+    document.querySelectorAll(".nav").forEach(x=>x.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll(".tab").forEach(x=>x.classList.add("hidden"));
+    byId(btn.dataset.tab+"Tab").classList.remove("hidden");
+    byId("pageTitle").textContent=btn.textContent;
+  });
 });
 
-window.installRoadPulseApp = installRoadPulseApp;
+
+/* Explicit browser globals for inline HTML handlers. */
+window.userLogin = userLogin;
+window.userRegister = userRegister;
+window.userLogout = userLogout;
+window.showAuthTab = showAuthTab;
+window.adminLogin = adminLogin;
+window.adminLogout = adminLogout;
+window.centerOnUser = centerOnUser;
+window.refreshAllLiveData = refreshAllLiveData;
+window.openReportSheet = openReportSheet;
+window.closeReportSheet = closeReportSheet;
+window.submitReport = submitReport;
+window.toggleVoiceAlerts = toggleVoiceAlerts;
+window.toggleTrafficLayer = toggleTrafficLayer;
+window.focusDestinationSearch = focusDestinationSearch;
+window.onDestinationSearchInput = onDestinationSearchInput;
+window.onDestinationSearchKeydown = onDestinationSearchKeydown;
+window.manualDestinationSearch = manualDestinationSearch;
+window.clearDestinationSearch = clearDestinationSearch;
+window.changeAppLanguage = changeAppLanguage;
+window.setNavigationMode = setNavigationMode;
+window.dismissCurrentAlert = dismissCurrentAlert;
+window.stopNavigation = stopNavigation;
+window.manualReroute = manualReroute;
+window.enableRouteFollow = enableRouteFollow;
+window.showRouteOverview = showRouteOverview;
+window.saveCurrentDestination = saveCurrentDestination;
+
+window.setReportStatus = setReportStatus;
+window.updateSetting = updateSetting;
+window.addCamera = addCamera;
+window.deleteCamera = deleteCamera;
+window.chooseDestinationResult = chooseDestinationResult;
+window.toggleFavoriteSearchResult = toggleFavoriteSearchResult;
+window.chooseQuickDestination = chooseQuickDestination;
