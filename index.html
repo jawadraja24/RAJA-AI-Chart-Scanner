@@ -3,11 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0f7c4b">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="RoadPulse">
+  <link rel="manifest" href="/manifest.webmanifest?v=webv141pwa1">
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
   <title>RoadPulse AI</title>
 
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=webv11">
+  <link rel="stylesheet" href="/assets/styles.css?v=webv14pwa1">
 </head>
 <body>
 <main class="shell">
@@ -88,12 +95,21 @@
           <option value="ru-RU">Русский</option>
           <option value="ar">العربية</option>
         </select>
+        <button
+          class="outline-btn install-app-btn"
+          id="installAppBtn"
+          type="button"
+          disabled
+          onclick="installRoadPulseApp()"
+          title="Install RoadPulse AI"
+        >⬇ <span class="install-label">Install</span></button>
         <button class="icon-btn" id="centerMeBtn" title="Center on me" onclick="centerOnUser()">◎</button>
         <button class="outline-btn" id="logoutBtn" onclick="userLogout()">Log out</button>
       </div>
     </header>
 
     <div class="map-shell">
+      <div id="pwaInstallToast" class="pwa-install-toast hidden"></div>
       <div id="map"></div>
 
       <section class="destination-search">
@@ -108,15 +124,15 @@
           <button
             id="destinationSearchGoBtn"
             type="button"
-            class="search-clear"
-            style="background:#17b36b;color:#fff;font-size:16px"
+            class="destination-action-btn"
             title="Search"
-          >⌕</button>
+          >Search</button>
           <button id="clearDestinationBtn" class="search-clear hidden" onclick="clearDestinationSearch()">×</button>
         </div>
         <div class="nav-mode-switch" role="group" aria-label="Navigation mode">
           <button id="navModeCarBtn" class="nav-mode-btn active" type="button" onclick="setNavigationMode('car')">🚗 Drive</button>
           <button id="navModeWalkBtn" class="nav-mode-btn" type="button" onclick="setNavigationMode('pedestrian')">🚶 Walk</button>
+          <button id="navModeBikeBtn" class="nav-mode-btn" type="button" onclick="setNavigationMode('bicycle')">🚲 Bike</button>
         </div>
         <div id="destinationResults" class="destination-results hidden"></div>
         <div id="destinationQuickList" class="destination-quick-list hidden"></div>
@@ -316,6 +332,7 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/assets/app.js?v=webv12walkfix5"></script>
+<script src="/assets/app.js?v=webv13modes1"></script>
+<script src="/assets/pwa.js?v=webv141pwa1"></script>
 </body>
 </html>
