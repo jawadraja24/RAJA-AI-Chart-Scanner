@@ -1,21 +1,28 @@
-const CACHE_VERSION = "roadpulse-v141-pwa-1";
+const CACHE_VERSION = "roadpulse-v15-easy-map-1";
 const APP_CACHE = `${CACHE_VERSION}-app`;
 const CDN_CACHE = `${CACHE_VERSION}-cdn`;
 
 const APP_SHELL = [
   "/",
-  "/assets/styles.css?v=webv14pwa1",
-  "/assets/app.js?v=webv13modes1",
-  "/assets/pwa.js?v=webv141pwa1",
+  "/assets/styles.css?v=webv15easy1",
+  "/assets/app.js?v=webv15easy1",
+  "/assets/pwa.js?v=webv15pwa1",
   "/assets/icons/icon-192.png",
   "/assets/icons/icon-512.png",
+  "/assets/icons/icon-512-maskable.png",
   "/assets/icons/apple-touch-icon.png"
 ];
 
 self.addEventListener("install", event => {
   event.waitUntil(
     caches.open(APP_CACHE)
-      .then(cache => cache.addAll(APP_SHELL))
+      .then(cache => Promise.all(
+        APP_SHELL.map(url =>
+          cache.add(url).catch(err => {
+            console.warn("RoadPulse cache skipped:", url, err);
+          })
+        )
+      ))
       .then(() => self.skipWaiting())
   );
 });
@@ -38,13 +45,15 @@ self.addEventListener("fetch", event => {
 
   const url = new URL(request.url);
 
-  // Never cache APIs, live traffic, auth, reports, routes, or search.
-  if (url.origin === self.location.origin && url.pathname.startsWith("/api/")) {
+  // Live APIs are always network-only.
+  if (
+    url.origin === self.location.origin &&
+    url.pathname.startsWith("/api/")
+  ){
     return;
   }
 
-  // Navigation: network first, cached app shell only as an offline fallback.
-  if (request.mode === "navigate") {
+  if (request.mode === "navigate"){
     event.respondWith(
       fetch(request)
         .then(response => {
@@ -57,21 +66,20 @@ self.addEventListener("fetch", event => {
     return;
   }
 
-  // Local static assets: cache first, refresh in background.
   if (
     url.origin === self.location.origin &&
     (
       url.pathname.startsWith("/assets/") ||
       url.pathname === "/manifest.webmanifest"
     )
-  ) {
+  ){
     event.respondWith(
       caches.match(request).then(cached => {
         const fresh = fetch(request)
           .then(response => {
-            if (response.ok) {
-              const copy = response.clone();
-              caches.open(APP_CACHE).then(cache => cache.put(request, copy));
+            if (response.ok){
+              caches.open(APP_CACHE)
+                .then(cache => cache.put(request, response.clone()));
             }
             return response;
           })
@@ -83,15 +91,15 @@ self.addEventListener("fetch", event => {
     return;
   }
 
-  // Cache Leaflet library resources, but do NOT cache map tiles.
-  if (url.hostname === "unpkg.com") {
+  // Leaflet library files may be cached; map tiles stay live/network-only.
+  if (url.hostname === "unpkg.com"){
     event.respondWith(
       caches.open(CDN_CACHE).then(async cache => {
         const cached = await cache.match(request);
         if (cached) return cached;
 
         const response = await fetch(request);
-        if (response.ok || response.type === "opaque") {
+        if (response.ok || response.type === "opaque"){
           cache.put(request, response.clone());
         }
         return response;
