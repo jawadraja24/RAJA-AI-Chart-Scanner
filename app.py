@@ -11,6 +11,7 @@ import time
 import threading
 import urllib.error
 import urllib.request
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,17 @@ def get_server_secret() -> bytes:
 
 
 SERVER_SECRET = get_server_secret()
+
+SUPPORTED_NAV_LANGUAGES = {
+    "en-GB", "de-DE", "fr-FR", "es-ES", "it-IT", "nl-NL",
+    "da-DK", "sv-SE", "fi-FI", "nb-NO", "pt-PT", "pl-PL",
+    "cs-CZ", "tr-TR", "hu-HU", "lt-LT", "sk-SK", "ru-RU",
+    "el-GR", "bg-BG", "sl-SI", "ar",
+}
+
+def normalize_nav_language(language: str | None) -> str:
+    value = (language or "en-GB").strip()
+    return value if value in SUPPORTED_NAV_LANGUAGES else "en-GB"
 
 TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY", "").strip()
 TRAFFIC_CACHE_TTL = 50
@@ -228,6 +240,15 @@ class ReportPayload(BaseModel):
     lng: float
     location: str | None = None
 
+
+class NavigationRoutePayload(BaseModel):
+    origin_lat: float
+    origin_lng: float
+    destination_lat: float
+    destination_lng: float
+    destination_name: str | None = None
+    language: str = "en-GB"
+
 def hash_password(password: str, salt: bytes) -> str:
     digest = hashlib.pbkdf2_hmac(
         "sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS
@@ -300,7 +321,21 @@ def get_setting(key: str, default: Any = None) -> Any:
 
 @app.get("/api/status")
 def public_status():
-    return {"ok": True, "app": "RoadPulse AI"}
+    return {
+        "ok": True,
+        "app": "RoadPulse AI",
+        "build": "web-v1",
+        "features": [
+            "gps",
+            "community_reports",
+            "tomtom_traffic",
+            "proximity_voice_alerts",
+            "navigation",
+            "multilingual_guidance",
+            "road_change_chime",
+        ],
+        "navigationLanguages": sorted(SUPPORTED_NAV_LANGUAGES),
+    }
 
 # --------------------------
 # User authentication
@@ -485,6 +520,231 @@ def create_report(payload: ReportPayload, request: Request):
     report_id = cur.lastrowid
     con.close()
     return {"ok": True, "id": report_id, "status": "pending"}
+
+
+
+# --------------------------
+# Search + traffic-aware navigation
+# --------------------------
+
+def _tomtom_json_get(url: str, timeout: int = 10) -> dict:
+    if not TOMTOM_API_KEY:
+        raise HTTPException(503, "TomTom API is not configured")
+
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "RoadPulseAI/1.0",
+        },
+        method="GET",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as upstream:
+            raw = upstream.read()
+            if upstream.status != 200:
+                raise HTTPException(502, "Navigation provider returned an error")
+    except urllib.error.HTTPError as exc:
+        # Do not return provider URLs or credentials to the browser.
+        if exc.code in (401, 403):
+            raise HTTPException(502, "TomTom key does not have access to this API")
+        if exc.code == 429:
+            raise HTTPException(429, "Navigation provider rate limit reached")
+        raise HTTPException(502, "Navigation provider request failed")
+    except (urllib.error.URLError, TimeoutError):
+        raise HTTPException(504, "Navigation provider timed out")
+
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise HTTPException(502, "Navigation provider returned invalid data")
+
+def _validate_lat_lng(lat: float, lng: float) -> None:
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        raise HTTPException(400, "Invalid coordinates")
+
+@app.get("/api/navigation/search")
+def navigation_search(
+    q: str,
+    request: Request,
+    lat: float | None = None,
+    lng: float | None = None,
+    limit: int = 6,
+    language: str = "en-GB",
+):
+    require_user(request)
+
+    query = q.strip()
+    if len(query) < 2:
+        return {"results": []}
+    if len(query) > 120:
+        raise HTTPException(400, "Search text is too long")
+
+    limit = max(1, min(int(limit), 8))
+    params = {
+        "key": TOMTOM_API_KEY,
+        "typeahead": "true",
+        "limit": str(limit),
+        "language": normalize_nav_language(language),
+    }
+
+    if lat is not None and lng is not None:
+        _validate_lat_lng(lat, lng)
+        params["lat"] = f"{lat:.6f}"
+        params["lon"] = f"{lng:.6f}"
+
+    encoded_query = urllib.parse.quote(query, safe="")
+    url = (
+        f"https://api.tomtom.com/search/2/search/{encoded_query}.json?"
+        + urllib.parse.urlencode(params)
+    )
+
+    data = _tomtom_json_get(url)
+    clean = []
+
+    for item in data.get("results", [])[:limit]:
+        position = item.get("position") or {}
+        result_lat = position.get("lat")
+        result_lng = position.get("lon")
+        if result_lat is None or result_lng is None:
+            continue
+
+        poi = item.get("poi") or {}
+        address = item.get("address") or {}
+        name = (
+            poi.get("name")
+            or address.get("streetName")
+            or address.get("municipality")
+            or address.get("freeformAddress")
+            or item.get("id")
+            or "Destination"
+        )
+        freeform = (
+            address.get("freeformAddress")
+            or ", ".join(
+                x for x in [
+                    address.get("streetName"),
+                    address.get("municipality"),
+                    address.get("countrySubdivision"),
+                    address.get("country"),
+                ]
+                if x
+            )
+        )
+
+        clean.append({
+            "id": str(item.get("id") or f"{result_lat},{result_lng}"),
+            "name": str(name)[:160],
+            "address": str(freeform or name)[:240],
+            "lat": float(result_lat),
+            "lng": float(result_lng),
+            "type": str(item.get("type") or "PLACE"),
+        })
+
+    return {"results": clean}
+
+@app.post("/api/navigation/route")
+def navigation_route(payload: NavigationRoutePayload, request: Request):
+    require_user(request)
+
+    _validate_lat_lng(payload.origin_lat, payload.origin_lng)
+    _validate_lat_lng(payload.destination_lat, payload.destination_lng)
+
+    language = normalize_nav_language(payload.language)
+    locations = (
+        f"{payload.origin_lat:.6f},{payload.origin_lng:.6f}:"
+        f"{payload.destination_lat:.6f},{payload.destination_lng:.6f}"
+    )
+
+    params = {
+        "key": TOMTOM_API_KEY,
+        "traffic": "true",
+        "travelMode": "car",
+        "routeType": "fastest",
+        "instructionsType": "text",
+        "instructionAnnouncementPoints": "all",
+        "language": language,
+        "routeRepresentation": "polyline",
+        "computeTravelTimeFor": "all",
+    }
+
+    url = (
+        "https://api.tomtom.com/routing/1/calculateRoute/"
+        + locations
+        + "/json?"
+        + urllib.parse.urlencode(params)
+    )
+
+    data = _tomtom_json_get(url, timeout=15)
+    routes = data.get("routes") or []
+    if not routes:
+        raise HTTPException(404, "No driving route found")
+
+    route = routes[0]
+    summary = route.get("summary") or {}
+    points = []
+
+    for leg in route.get("legs") or []:
+        for point in leg.get("points") or []:
+            lat = point.get("latitude")
+            lng = point.get("longitude")
+            if lat is None or lng is None:
+                continue
+            pair = [float(lat), float(lng)]
+            if not points or pair != points[-1]:
+                points.append(pair)
+
+    if len(points) < 2:
+        raise HTTPException(502, "Navigation provider returned no route geometry")
+
+    guidance = route.get("guidance") or {}
+    instructions = []
+
+    for idx, instruction in enumerate(guidance.get("instructions") or []):
+        point = instruction.get("point") or {}
+        instructions.append({
+            "index": idx,
+            "routeOffsetMeters": int(instruction.get("routeOffsetInMeters") or 0),
+            "travelTimeSeconds": int(instruction.get("travelTimeInSeconds") or 0),
+            "pointIndex": int(instruction.get("pointIndex") or 0),
+            "lat": point.get("latitude"),
+            "lng": point.get("longitude"),
+            "instructionType": instruction.get("instructionType"),
+            "maneuver": instruction.get("maneuver"),
+            "message": (
+                instruction.get("combinedMessage")
+                or instruction.get("message")
+                or instruction.get("maneuver")
+                or "Continue"
+            ),
+            "street": instruction.get("street"),
+            "roadNumbers": instruction.get("roadNumbers") or [],
+            "exitNumber": instruction.get("exitNumber"),
+            "roundaboutExitNumber": instruction.get("roundaboutExitNumber"),
+        })
+
+    return {
+        "destination": {
+            "name": (payload.destination_name or "Destination")[:180],
+            "lat": payload.destination_lat,
+            "lng": payload.destination_lng,
+        },
+        "summary": {
+            "lengthMeters": int(summary.get("lengthInMeters") or 0),
+            "travelTimeSeconds": int(summary.get("travelTimeInSeconds") or 0),
+            "trafficDelaySeconds": int(summary.get("trafficDelayInSeconds") or 0),
+            "trafficLengthMeters": int(summary.get("trafficLengthInMeters") or 0),
+            "departureTime": summary.get("departureTime"),
+            "arrivalTime": summary.get("arrivalTime"),
+            "noTrafficTravelTimeSeconds": summary.get("noTrafficTravelTimeInSeconds"),
+            "historicTrafficTravelTimeSeconds": summary.get("historicTrafficTravelTimeInSeconds"),
+            "liveTrafficTravelTimeSeconds": summary.get("liveTrafficIncidentsTravelTimeInSeconds"),
+        },
+        "points": points,
+        "instructions": instructions,
+        "provider": "TomTom Routing API",
+    }
 
 
 # --------------------------
