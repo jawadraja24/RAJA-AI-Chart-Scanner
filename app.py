@@ -123,6 +123,11 @@ def init_db():
         "admin_2fa_required": False,
         "default_country": "DE",
         "camera_warning_mode": "country_compliance",
+        "proximity_alerts": True,
+        "alert_distance_m": 1200,
+        "urgent_alert_distance_m": 400,
+        "alert_repeat_cooldown_s": 300,
+        "voice_language": "en-GB",
     }
     for k, v in defaults.items():
         cur.execute(
@@ -432,6 +437,13 @@ def map_data(request: Request):
             "hazard_layer": get_setting("hazard_layer", True),
             "camera_warning_mode": get_setting("camera_warning_mode", "country_compliance"),
             "traffic_available": bool(TOMTOM_API_KEY),
+            "voice_alerts": get_setting("voice_alerts", True),
+            "proximity_alerts": get_setting("proximity_alerts", True),
+            "alert_distance_m": get_setting("alert_distance_m", 1200),
+            "urgent_alert_distance_m": get_setting("urgent_alert_distance_m", 400),
+            "alert_repeat_cooldown_s": get_setting("alert_repeat_cooldown_s", 300),
+            "voice_language": get_setting("voice_language", "en-GB"),
+            "default_country": get_setting("default_country", "DE"),
         },
     }
 
@@ -664,6 +676,8 @@ def update_setting(key: str, payload: SettingPayload, request: Request):
         "app_name", "voice_alerts", "background_driving_mode", "community_reports",
         "camera_layer", "traffic_layer", "hazard_layer", "admin_2fa_required",
         "default_country", "camera_warning_mode",
+        "proximity_alerts", "alert_distance_m", "urgent_alert_distance_m",
+        "alert_repeat_cooldown_s", "voice_language",
     }
     if key not in allowed:
         raise HTTPException(400, "Unknown setting")
