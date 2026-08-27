@@ -7,7 +7,7 @@
 
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=alertfix2">
+  <link rel="stylesheet" href="/assets/styles.css?v=webv11">
 </head>
 <body>
 <main class="shell">
@@ -64,13 +64,93 @@
         </div>
       </div>
       <div class="top-actions">
-        <button class="icon-btn" title="Center on me" onclick="centerOnUser()">◎</button>
-        <button class="outline-btn" onclick="userLogout()">Log out</button>
+        <select id="appLanguageSelect" class="language-select" onchange="changeAppLanguage(this.value)" title="Language">
+          <option value="en-GB">English</option>
+          <option value="de-DE">Deutsch</option>
+          <option value="it-IT">Italiano</option>
+          <option value="fr-FR">Français</option>
+          <option value="es-ES">Español</option>
+          <option value="nl-NL">Nederlands</option>
+          <option value="pt-PT">Português</option>
+          <option value="pl-PL">Polski</option>
+          <option value="cs-CZ">Čeština</option>
+          <option value="da-DK">Dansk</option>
+          <option value="sv-SE">Svenska</option>
+          <option value="fi-FI">Suomi</option>
+          <option value="nb-NO">Norsk</option>
+          <option value="hu-HU">Magyar</option>
+          <option value="tr-TR">Türkçe</option>
+          <option value="sk-SK">Slovenčina</option>
+          <option value="sl-SI">Slovenščina</option>
+          <option value="lt-LT">Lietuvių</option>
+          <option value="el-GR">Ελληνικά</option>
+          <option value="bg-BG">Български</option>
+          <option value="ru-RU">Русский</option>
+          <option value="ar">العربية</option>
+        </select>
+        <button class="icon-btn" id="centerMeBtn" title="Center on me" onclick="centerOnUser()">◎</button>
+        <button class="outline-btn" id="logoutBtn" onclick="userLogout()">Log out</button>
       </div>
     </header>
 
     <div class="map-shell">
       <div id="map"></div>
+
+      <section class="destination-search">
+        <div class="destination-input-row">
+          <span class="search-icon">⌕</span>
+          <input
+            id="destinationSearchInput"
+            type="search"
+            autocomplete="off"
+            placeholder="Where do you want to go?"
+            oninput="onDestinationSearchInput()"
+            onkeydown="onDestinationSearchKeydown(event)"
+          >
+          <button id="clearDestinationBtn" class="search-clear hidden" onclick="clearDestinationSearch()">×</button>
+        </div>
+        <div id="destinationResults" class="destination-results hidden"></div>
+        <div id="destinationQuickList" class="destination-quick-list hidden"></div>
+      </section>
+
+      <section id="navigationCard" class="navigation-card hidden" aria-live="polite">
+        <div id="navManeuverIcon" class="nav-maneuver-icon">↑</div>
+        <div class="nav-guidance-copy">
+          <strong id="navInstruction">Continue</strong>
+          <span id="navInstructionDistance">—</span>
+          <div class="next-road-line">
+            <span class="next-road-label" id="nextRoadLabel">Next road</span>
+            <strong id="navNextRoad">—</strong>
+          </div>
+          <small id="navDestinationName">Destination</small>
+        </div>
+        <button class="nav-stop-btn" onclick="stopNavigation()" title="Stop navigation">×</button>
+      </section>
+
+      <section id="routeSummaryCard" class="route-summary-card hidden">
+        <div>
+          <strong id="routeEta">—</strong>
+          <span>ETA</span>
+        </div>
+        <div>
+          <strong id="routeDuration">—</strong>
+          <span>Drive</span>
+        </div>
+        <div>
+          <strong id="routeDistance">—</strong>
+          <span>Distance</span>
+        </div>
+        <div>
+          <strong id="routeDelay">—</strong>
+          <span>Traffic delay</span>
+        </div>
+        <div class="route-control-group">
+          <button id="followRouteBtn" class="route-control-btn active" onclick="enableRouteFollow()">◎ Follow</button>
+          <button class="route-control-btn" onclick="showRouteOverview()">▱ Overview</button>
+          <button class="route-control-btn" onclick="saveCurrentDestination()">☆ Save</button>
+          <button class="route-control-btn" onclick="manualReroute()">↻ Route</button>
+        </div>
+      </section>
 
       <div class="map-status">
         <span id="gpsBadge" class="pill warning">GPS waiting…</span>
@@ -79,6 +159,7 @@
         <button id="trafficBadge" class="pill traffic-pill" onclick="toggleTrafficLayer()">Traffic checking…</button>
         <button id="voiceBadge" class="pill voice-pill" onclick="toggleVoiceAlerts()">🔊 Voice ON</button>
         <span id="nearbyBadge" class="pill nearby-pill">Nearby: checking…</span>
+        <span id="networkBadge" class="pill network-pill">Online</span>
       </div>
 
       <div id="trafficLegend" class="traffic-legend hidden">
@@ -125,7 +206,7 @@
     </div>
 
     <nav class="bottom-nav">
-      <button class="active">⌂<span>Map</span></button>
+      <button class="active" onclick="focusDestinationSearch()">⌕<span>Navigate</span></button>
       <button onclick="centerOnUser()">◎<span>My GPS</span></button>
       <button onclick="openReportSheet()">＋<span>Report</span></button>
       <button onclick="refreshAllLiveData()">↻<span>Refresh</span></button>
@@ -226,6 +307,6 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/assets/app.js?v=alertfix2"></script>
+<script src="/assets/app.js?v=webv11"></script>
 </body>
 </html>
