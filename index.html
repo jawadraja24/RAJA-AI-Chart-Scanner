@@ -7,7 +7,7 @@
 
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/styles.css?v=alertfix2">
 </head>
 <body>
 <main class="shell">
@@ -78,6 +78,7 @@
         <span id="incidentBadge" class="pill">0 verified reports</span>
         <button id="trafficBadge" class="pill traffic-pill" onclick="toggleTrafficLayer()">Traffic checking…</button>
         <button id="voiceBadge" class="pill voice-pill" onclick="toggleVoiceAlerts()">🔊 Voice ON</button>
+        <span id="nearbyBadge" class="pill nearby-pill">Nearby: checking…</span>
       </div>
 
       <div id="trafficLegend" class="traffic-legend hidden">
@@ -225,6 +226,6 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/assets/app.js"></script>
+<script src="/assets/app.js?v=alertfix2"></script>
 </body>
 </html>
