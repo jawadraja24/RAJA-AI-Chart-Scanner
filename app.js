@@ -18,6 +18,9 @@ let currentUser = null;
 let map = null;
 let userMarker = null;
 let userAccuracyCircle = null;
+let userHeadingMarker = null;
+let navDestinationMarker = null;
+let lastNavigationCameraUpdateAt = 0;
 let currentPosition = null;
 let watchId = null;
 let incidentLayer = null;
@@ -361,6 +364,18 @@ function updateNavigationModeUI(){
   document.body.classList.toggle("walking-navigation", navigationMode === "pedestrian" && navigationActive);
   document.body.classList.toggle("cycling-navigation", navigationMode === "bicycle" && navigationActive);
   document.body.classList.toggle("car-navigation", navigationMode === "car" && navigationActive);
+
+  const modeBadge = byId("navModeBadge");
+  if (modeBadge){
+    const modeText = navigationMode === "pedestrian"
+      ? `🚶 ${t("walkMode")}`
+      : (navigationMode === "bicycle" ? `🚲 ${t("cycleMode")}` : `🚗 ${t("driveMode")}`);
+    modeBadge.textContent = modeText;
+    modeBadge.dataset.mode = navigationMode;
+  }
+
+  updateTrafficClarity();
+  renderDestinationMarker();
 }
 
 function localizedInMeters(n){
@@ -603,8 +618,16 @@ function ensureMap(){
 
   map = L.map("map", {zoomControl:true}).setView([53.5511, 9.9937], 12);
 
+  map.createPane("basemap");
+  map.getPane("basemap").style.zIndex = 200;
+
+  map.createPane("traffic");
+  map.getPane("traffic").style.zIndex = 260;
+  map.getPane("traffic").style.pointerEvents = "none";
+
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom:19,
+    pane:"basemap",
     attribution:'&copy; OpenStreetMap contributors'
   }).addTo(map);
 
@@ -614,7 +637,7 @@ function ensureMap(){
   trafficFlowLayer = L.tileLayer("/api/traffic/flow/{z}/{x}/{y}", {
     tileSize:256,
     opacity:.88,
-    zIndex:250,
+    pane:"traffic",
     maxZoom:22,
     updateWhenIdle:false,
     keepBuffer:3
@@ -623,7 +646,7 @@ function ensureMap(){
   trafficIncidentLayer = L.tileLayer("/api/traffic/incidents/{z}/{x}/{y}", {
     tileSize:256,
     opacity:.92,
-    zIndex:260,
+    pane:"traffic",
     maxZoom:22,
     updateWhenIdle:false,
     keepBuffer:3
@@ -642,6 +665,13 @@ function ensureMap(){
     if (navigationActive){
       navFollowMode = false;
       updateFollowButton();
+    }
+  });
+
+  map.on("zoomstart", ()=>{
+    if (navigationActive && map._loaded && map._animatingZoom !== true){
+      // User zoom gestures should not permanently fight the follow camera.
+      lastNavigationCameraUpdateAt = Date.now();
     }
   });
 }
@@ -716,6 +746,7 @@ function onGpsPosition(pos){
     speedBadge.textContent = `${speedKmh ?? 0} km/h`;
   }
 
+  updateUserHeadingMarker(latlng);
   evaluateProximityAlerts();
   updateNavigationProgress();
 
@@ -724,11 +755,7 @@ function onGpsPosition(pos){
     navFollowMode &&
     map
   ){
-    map.setView(
-      [currentPosition.lat,currentPosition.lng],
-      Math.max(map.getZoom(),16),
-      {animate:true}
-    );
+    updateNavigationCamera();
   }
 }
 
@@ -760,6 +787,150 @@ function centerOnUser(){
   }else{
     startGpsWatch();
     setGpsBadge("Waiting for GPS…", false);
+  }
+}
+
+
+function navigationModeColor(){
+  if (navigationMode === "pedestrian") return "#006cff";
+  if (navigationMode === "bicycle") return "#009fbd";
+  return "#5b2aef";
+}
+
+function navigationFollowZoom(){
+  const speed = Math.max(0, Number(currentPosition?.speed || 0));
+
+  if (navigationMode === "pedestrian"){
+    return 18;
+  }
+
+  if (navigationMode === "bicycle"){
+    if (speed >= 7.0) return 16;
+    if (speed >= 3.5) return 17;
+    return 18;
+  }
+
+  // Car: wider view as speed increases.
+  if (speed >= 27.8) return 14; // ~100 km/h
+  if (speed >= 16.7) return 15; // ~60 km/h
+  if (speed >= 8.3) return 16;  // ~30 km/h
+  return 17;
+}
+
+function updateNavigationCamera(force=false){
+  if (!map || !currentPosition || !navigationActive || !navFollowMode) return;
+
+  const now = Date.now();
+  if (!force && now - lastNavigationCameraUpdateAt < 900) return;
+  lastNavigationCameraUpdateAt = now;
+
+  const target = [currentPosition.lat,currentPosition.lng];
+  const zoom = navigationFollowZoom();
+
+  if (Math.abs(map.getZoom() - zoom) >= 1){
+    map.setView(target, zoom, {animate:true});
+  }else{
+    map.panTo(target, {animate:true, duration:.35});
+  }
+}
+
+function updateUserHeadingMarker(latlng){
+  if (!map || !currentPosition) return;
+
+  const heading = Number(currentPosition.heading);
+  const speed = Math.max(0, Number(currentPosition.speed || 0));
+  const hasHeading = Number.isFinite(heading) && heading >= 0 && speed >= 0.35;
+
+  if (!hasHeading){
+    if (userHeadingMarker && map.hasLayer(userHeadingMarker)){
+      map.removeLayer(userHeadingMarker);
+    }
+    return;
+  }
+
+  const icon = L.divIcon({
+    className:"roadpulse-heading-marker-wrap",
+    html:`<div class="roadpulse-heading-marker" style="transform:rotate(${heading}deg)">▲</div>`,
+    iconSize:[34,34],
+    iconAnchor:[17,17]
+  });
+
+  if (!userHeadingMarker){
+    userHeadingMarker = L.marker(latlng,{
+      icon,
+      interactive:false,
+      keyboard:false,
+      zIndexOffset:1200
+    }).addTo(map);
+  }else{
+    if (!map.hasLayer(userHeadingMarker)) userHeadingMarker.addTo(map);
+    userHeadingMarker.setLatLng(latlng);
+    userHeadingMarker.setIcon(icon);
+  }
+}
+
+function renderDestinationMarker(){
+  if (!map){
+    return;
+  }
+
+  if (!navDestination){
+    clearDestinationMarker();
+    return;
+  }
+
+  const color = navigationModeColor();
+  const icon = L.divIcon({
+    className:"roadpulse-destination-marker-wrap",
+    html:`<div class="roadpulse-destination-pin" style="--pin-color:${color}"><span>●</span></div>`,
+    iconSize:[38,48],
+    iconAnchor:[19,45]
+  });
+
+  const latlng = [Number(navDestination.lat), Number(navDestination.lng)];
+
+  if (!navDestinationMarker){
+    navDestinationMarker = L.marker(latlng,{
+      icon,
+      zIndexOffset:1050,
+      title:navDestination.name || "Destination"
+    }).addTo(map);
+  }else{
+    if (!map.hasLayer(navDestinationMarker)) navDestinationMarker.addTo(map);
+    navDestinationMarker.setLatLng(latlng);
+    navDestinationMarker.setIcon(icon);
+  }
+}
+
+function clearDestinationMarker(){
+  if (map && navDestinationMarker && map.hasLayer(navDestinationMarker)){
+    map.removeLayer(navDestinationMarker);
+  }
+  navDestinationMarker = null;
+}
+
+function updateTrafficClarity(){
+  if (!trafficFlowLayer || !trafficIncidentLayer) return;
+
+  let flowOpacity = .88;
+  let incidentOpacity = .92;
+
+  if (navigationActive){
+    if (navigationMode === "car"){
+      flowOpacity = .42;
+      incidentOpacity = .70;
+    }else{
+      flowOpacity = .17;
+      incidentOpacity = .34;
+    }
+  }
+
+  trafficFlowLayer.setOpacity(flowOpacity);
+  trafficIncidentLayer.setOpacity(incidentOpacity);
+
+  const legend = byId("trafficLegend");
+  if (legend){
+    legend.classList.toggle("navigation-muted", navigationActive);
   }
 }
 
@@ -874,6 +1045,8 @@ function applyTrafficLayerState(adminTrafficEnabled=true){
     badge.classList.add("off");
     legend && legend.classList.add("hidden");
   }
+
+  updateTrafficClarity();
 }
 
 function toggleTrafficLayer(){
@@ -925,6 +1098,7 @@ function updateDestinationActionButton(){
   btn.textContent = ready ? "GO →" : "Search";
   btn.title = ready ? "Start navigation" : "Search destination";
   btn.classList.toggle("ready", ready);
+  document.body.classList.toggle("destination-ready", ready);
 }
 
 async function manualDestinationSearch(){
@@ -1103,6 +1277,7 @@ function chooseDestinationResult(index){
   byId("destinationQuickList")?.classList.add("hidden");
   byId("clearDestinationBtn")?.classList.remove("hidden");
   rememberRecentDestination(navDestination);
+  renderDestinationMarker();
   updateDestinationActionButton();
 }
 
@@ -1115,6 +1290,7 @@ function clearDestinationSearch(){
     stopNavigation();
   }else{
     navDestination = null;
+    clearDestinationMarker();
     updateDestinationActionButton();
   }
 
@@ -1208,15 +1384,15 @@ function applyNavigationRoute(data, isReroute=false){
   if (navRouteOutlineLayer && map) map.removeLayer(navRouteOutlineLayer);
 
   const routeStyle = navigationMode === "pedestrian"
-    ? {color:"#076cff", weight:8, dashArray:null}
+    ? {color:"#006cff", weight:9, dashArray:null}
     : navigationMode === "bicycle"
-      ? {color:"#008fb3", weight:8, dashArray:"13 7"}
-      : {color:"#6d28d9", weight:8, dashArray:null};
+      ? {color:"#009fbd", weight:9, dashArray:"14 7"}
+      : {color:"#5b2aef", weight:9, dashArray:null};
 
   navRouteOutlineLayer = L.polyline(navRoutePoints, {
     color:"#ffffff",
-    weight:routeStyle.weight + 6,
-    opacity:.96,
+    weight:routeStyle.weight + 8,
+    opacity:.98,
     lineJoin:"round",
     lineCap:"round",
     dashArray:routeStyle.dashArray
@@ -1231,11 +1407,15 @@ function applyNavigationRoute(data, isReroute=false){
     dashArray:routeStyle.dashArray
   }).addTo(map);
 
+  renderDestinationMarker();
+  updateTrafficClarity();
+
   if (!isReroute){
     try{
       map.fitBounds(navRouteLayer.getBounds(), {
-        padding:[70,70],
-        maxZoom:16
+        paddingTopLeft:[70,120],
+        paddingBottomRight:[70,140],
+        maxZoom:navigationMode === "pedestrian" ? 17 : 16
       });
     }catch(_){}
   }
@@ -1324,11 +1504,17 @@ function stopNavigation(clearDestination=true){
 
   if (clearDestination){
     navDestination = null;
+    clearDestinationMarker();
     const input = byId("destinationSearchInput");
     if (input) input.value = "";
     byId("clearDestinationBtn")?.classList.add("hidden");
+  }else{
+    renderDestinationMarker();
   }
+
+  updateTrafficClarity();
   updateDestinationActionButton();
+  updateFollowButton();
 }
 
 async function manualReroute(){
@@ -1808,20 +1994,14 @@ function chooseQuickDestination(index){
   box.classList.add("hidden");
   byId("clearDestinationBtn")?.classList.remove("hidden");
   rememberRecentDestination(navDestination);
+  renderDestinationMarker();
   updateDestinationActionButton();
 }
 
 function enableRouteFollow(){
   navFollowMode = true;
   updateFollowButton();
-
-  if (currentPosition && map){
-    map.setView(
-      [currentPosition.lat,currentPosition.lng],
-      navigationMode === "pedestrian" ? 18 : 17,
-      {animate:true}
-    );
-  }
+  updateNavigationCamera(true);
 }
 
 function showRouteOverview(){
@@ -1840,9 +2020,16 @@ function showRouteOverview(){
 
 function updateFollowButton(){
   const btn = byId("followRouteBtn");
-  if (!btn) return;
-  btn.classList.toggle("active", navFollowMode);
-  btn.textContent = navFollowMode ? `◎ ${t("follow")}` : `◎ ${t("followOff")}`;
+  if (btn){
+    btn.classList.toggle("active", navFollowMode);
+    btn.textContent = navFollowMode ? `◎ ${t("follow")}` : `◎ ${t("followOff")}`;
+  }
+
+  const recenter = byId("mapRecenterBtn");
+  if (recenter){
+    recenter.classList.toggle("hidden", !navigationActive || navFollowMode);
+  }
+
   updateRouteControlLabels();
 }
 
@@ -2497,6 +2684,7 @@ window.dismissCurrentAlert = dismissCurrentAlert;
 window.stopNavigation = stopNavigation;
 window.manualReroute = manualReroute;
 window.enableRouteFollow = enableRouteFollow;
+window.updateNavigationCamera = updateNavigationCamera;
 window.showRouteOverview = showRouteOverview;
 window.saveCurrentDestination = saveCurrentDestination;
 
