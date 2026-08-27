@@ -114,6 +114,10 @@
           >⌕</button>
           <button id="clearDestinationBtn" class="search-clear hidden" onclick="clearDestinationSearch()">×</button>
         </div>
+        <div class="nav-mode-switch" role="group" aria-label="Navigation mode">
+          <button id="navModeCarBtn" class="nav-mode-btn active" type="button" onclick="setNavigationMode('car')">🚗 Drive</button>
+          <button id="navModeWalkBtn" class="nav-mode-btn" type="button" onclick="setNavigationMode('pedestrian')">🚶 Walk</button>
+        </div>
         <div id="destinationResults" class="destination-results hidden"></div>
         <div id="destinationQuickList" class="destination-quick-list hidden"></div>
       </section>
@@ -135,19 +139,19 @@
       <section id="routeSummaryCard" class="route-summary-card hidden">
         <div>
           <strong id="routeEta">—</strong>
-          <span>ETA</span>
+          <span id="routeEtaLabel">ETA</span>
         </div>
         <div>
           <strong id="routeDuration">—</strong>
-          <span>Drive</span>
+          <span id="routeDurationLabel">Drive</span>
         </div>
         <div>
           <strong id="routeDistance">—</strong>
-          <span>Distance</span>
+          <span id="routeDistanceLabel">Distance</span>
         </div>
-        <div>
+        <div id="routeTrafficDelayItem">
           <strong id="routeDelay">—</strong>
-          <span>Traffic delay</span>
+          <span id="routeDelayLabel">Traffic delay</span>
         </div>
         <div class="route-control-group">
           <button id="followRouteBtn" class="route-control-btn active" onclick="enableRouteFollow()">◎ Follow</button>
@@ -312,6 +316,6 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/assets/app.js?v=webv11searchfix4"></script>
+<script src="/assets/app.js?v=webv12walkfix5"></script>
 </body>
 </html>
