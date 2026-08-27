@@ -74,8 +74,10 @@
 
       <div class="map-status">
         <span id="gpsBadge" class="pill warning">GPS waiting…</span>
+        <span id="speedBadge" class="pill speed-pill">0 km/h</span>
         <span id="incidentBadge" class="pill">0 verified reports</span>
         <button id="trafficBadge" class="pill traffic-pill" onclick="toggleTrafficLayer()">Traffic checking…</button>
+        <button id="voiceBadge" class="pill voice-pill" onclick="toggleVoiceAlerts()">🔊 Voice ON</button>
       </div>
 
       <div id="trafficLegend" class="traffic-legend hidden">
@@ -85,6 +87,16 @@
         <span><i class="traffic-dot traffic-heavy"></i> Heavy</span>
         <span><i class="traffic-dot traffic-closed"></i> Closed / severe</span>
       </div>
+
+      <section id="proximityAlertCard" class="proximity-alert-card hidden" aria-live="polite">
+        <div class="alert-icon" id="proximityAlertIcon">⚠️</div>
+        <div class="alert-copy">
+          <strong id="proximityAlertTitle">Hazard ahead</strong>
+          <span id="proximityAlertDistance">800 m</span>
+          <small id="proximityAlertLocation">Verified nearby report</small>
+        </div>
+        <button class="alert-dismiss-btn" onclick="dismissCurrentAlert()" title="Dismiss this alert">×</button>
+      </section>
 
       <button class="report-fab" onclick="openReportSheet()" aria-label="Report incident">+</button>
 
