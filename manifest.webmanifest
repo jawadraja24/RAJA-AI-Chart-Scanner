@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "RoadPulse AI",
+  "short_name": "RoadPulse",
+  "description": "Drive, walk and cycle navigation with live traffic and community road alerts.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f7c4b",
+  "orientation": "any",
+  "categories": [
+    "navigation",
+    "travel",
+    "maps"
+  ],
+  "icons": [
+    {
+      "src": "/assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
