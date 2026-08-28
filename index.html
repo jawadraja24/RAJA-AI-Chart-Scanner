@@ -14,7 +14,7 @@
 
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=webv151mobile1">
+  <link rel="stylesheet" href="/assets/styles.css?v=webv17nav1">
 </head>
 <body>
 <main class="shell">
@@ -183,6 +183,7 @@
           <button class="route-control-btn" onclick="showRouteOverview()">▱ Overview</button>
           <button class="route-control-btn" onclick="saveCurrentDestination()">☆ Save</button>
           <button class="route-control-btn" onclick="manualReroute()">↻ Route</button>
+          <button id="walkingLiveViewBtn" class="route-control-btn live-view-btn hidden" onclick="openWalkingLiveView()">◉ Live View</button>
         </div>
       </section>
 
@@ -204,6 +205,15 @@
         title="Re-center and follow"
       >◎ <span>Re-center</span></button>
 
+      <button
+        id="mapCompassBtn"
+        class="map-compass-btn"
+        type="button"
+        onclick="resetMapBearing()"
+        title="Reset map to north"
+        aria-label="Reset map to north"
+      ><span class="compass-arrow">➤</span><small>N</small></button>
+
       <div id="trafficLegend" class="traffic-legend hidden">
         <strong>Live Traffic</strong>
         <span><i class="traffic-dot traffic-good"></i> Free flow</span>
@@ -223,6 +233,30 @@
       </section>
 
       <button class="report-fab" onclick="openReportSheet()" aria-label="Report incident">+</button>
+
+      <section id="walkingLiveViewSheet" class="walking-live-view-sheet hidden" aria-live="polite">
+        <video id="walkingLiveViewVideo" autoplay playsinline muted></video>
+        <div class="live-view-shade"></div>
+        <div class="live-view-guidance">
+          <div id="liveViewArrow" class="live-view-arrow">↑</div>
+          <div class="live-view-copy">
+            <strong id="liveViewInstruction">Continue</strong>
+            <span id="liveViewInstructionMeta">Follow the route</span>
+          </div>
+        </div>
+        <div class="live-view-route-ribbon" aria-hidden="true">
+          <i></i><i></i><i></i><i></i>
+        </div>
+        <div id="walkingLiveViewError" class="live-view-error hidden"></div>
+        <div class="live-view-footer">
+          <button type="button" class="live-view-close" onclick="closeWalkingLiveView()">×</button>
+          <div>
+            <strong>Walking Live View</strong>
+            <small>Camera overlay + turn guidance</small>
+          </div>
+          <button type="button" class="live-view-map-btn" onclick="closeWalkingLiveView()">Map</button>
+        </div>
+      </section>
 
       <section id="reportSheet" class="report-sheet hidden">
         <div class="sheet-handle"></div>
@@ -343,13 +377,34 @@
           <p class="muted">Owner controls. Camera behavior should follow applicable country rules.</p>
           <div id="allSettings"></div>
         </div>
+
+        <div class="panel section-gap admin-password-panel">
+          <h3>Change Admin PIN / Password</h3>
+          <p class="muted">Enter the current PIN/password first, then choose a new one. The new value is stored as a salted hash in the persistent RoadPulse data directory.</p>
+
+          <form id="adminPasswordChangeForm" class="stack admin-password-form"
+                onsubmit="event.preventDefault(); changeAdminPassword();">
+            <label>Current PIN / Password
+              <input id="adminCurrentPassword" type="password" autocomplete="current-password" required>
+            </label>
+            <label>New PIN / Password
+              <input id="adminNewPassword" type="password" minlength="4" autocomplete="new-password" required>
+            </label>
+            <label>Confirm New PIN / Password
+              <input id="adminConfirmPassword" type="password" minlength="4" autocomplete="new-password" required>
+            </label>
+            <button type="submit">Change PIN / Password</button>
+          </form>
+
+          <div id="adminPasswordChangeMsg" class="notice hidden" aria-live="polite"></div>
+        </div>
       </div>
     </section>
   </section>
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/assets/app.js?v=webv15easy1"></script>
+<script src="/assets/app.js?v=webv17nav1"></script>
 <script src="/assets/pwa.js?v=webv15pwa1"></script>
 </body>
 </html>
