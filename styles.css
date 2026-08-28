@@ -1143,3 +1143,306 @@ body.navigation-active .report-fab{
     z-index:690;
   }
 }
+
+/* Admin PIN/password change */
+.admin-password-panel{max-width:720px}
+.admin-password-form{max-width:520px}
+.admin-password-form button{justify-self:start;min-width:220px}
+.admin-password-panel .notice{max-width:520px}
+@media(max-width:640px){
+  .admin-password-form button{width:100%;justify-self:stretch}
+}
+
+/* ============================================================
+   RoadPulse v17 — Google-inspired turn navigation + walking view
+   ============================================================ */
+
+#map .leaflet-map-pane{
+  will-change:transform,rotate;
+  transition:rotate .08s linear;
+}
+
+.map-compass-btn{
+  --map-bearing:0deg;
+  position:absolute;
+  z-index:470;
+  right:16px;
+  top:88px;
+  width:48px;
+  height:48px;
+  padding:0;
+  border-radius:50%;
+  background:rgba(255,255,255,.96);
+  color:#16201e;
+  border:1px solid rgba(20,32,29,.12);
+  box-shadow:0 8px 24px rgba(16,35,31,.16);
+  display:grid;
+  place-items:center;
+}
+.map-compass-btn .compass-arrow{
+  display:block;
+  font-size:21px;
+  line-height:1;
+  transform:rotate(calc(var(--map-bearing) - 90deg));
+  transition:transform .08s linear;
+  color:#d43a3a;
+}
+.map-compass-btn small{
+  position:absolute;
+  bottom:3px;
+  font-size:9px;
+  color:#26322f;
+  font-weight:900;
+}
+
+.navigation-active .destination-search{
+  opacity:.12;
+  pointer-events:none;
+  transform:translateY(-6px);
+}
+.navigation-active .map-status{
+  opacity:.18;
+  pointer-events:none;
+}
+.navigation-active .report-fab{
+  opacity:.28;
+}
+
+.navigation-active .navigation-card{
+  top:12px;
+  left:12px;
+  right:12px;
+  width:auto;
+  max-width:720px;
+  margin:0 auto;
+  background:linear-gradient(135deg,#0b7d70,#076c62);
+  color:#fff;
+  border:0;
+  border-radius:20px;
+  box-shadow:0 14px 34px rgba(5,74,67,.28);
+  padding:14px 60px 14px 14px;
+  min-height:92px;
+}
+.navigation-active .nav-maneuver-icon{
+  width:58px;
+  height:58px;
+  min-width:58px;
+  border-radius:16px;
+  background:rgba(255,255,255,.14);
+  color:#fff;
+  font-size:36px;
+}
+.navigation-active .nav-guidance-copy strong{
+  font-size:clamp(20px,4.4vw,32px);
+  line-height:1.03;
+  color:#fff;
+}
+.navigation-active .nav-guidance-copy > span,
+.navigation-active .next-road-line,
+.navigation-active .nav-guidance-copy small{
+  color:rgba(255,255,255,.91);
+}
+.navigation-active .nav-mode-badge{
+  color:#073f3a!important;
+  background:#dff9f4!important;
+}
+.navigation-active .nav-stop-btn{
+  position:absolute;
+  right:12px;
+  top:12px;
+  background:rgba(255,255,255,.16);
+  color:#fff;
+}
+.navigation-active .route-summary-card{
+  left:50%;
+  right:auto;
+  transform:translateX(-50%);
+  bottom:12px;
+  width:min(760px,calc(100% - 20px));
+  border-radius:22px;
+  box-shadow:0 16px 44px rgba(16,35,31,.24);
+  border:1px solid rgba(20,32,29,.08);
+  padding:13px 14px;
+  background:rgba(255,255,255,.97);
+  backdrop-filter:blur(12px);
+}
+.navigation-active .route-summary-card > div > strong{
+  font-size:18px;
+}
+.navigation-active .route-control-group{
+  grid-column:1/-1;
+  display:flex;
+  gap:7px;
+  overflow-x:auto;
+  padding-top:3px;
+  scrollbar-width:none;
+}
+.navigation-active .route-control-group::-webkit-scrollbar{display:none}
+.navigation-active .route-control-btn{
+  flex:0 0 auto;
+  min-height:40px;
+  border-radius:999px;
+  padding:9px 13px;
+}
+.navigation-active .route-control-btn.active{
+  background:#0b7d70;
+  color:#fff;
+}
+.navigation-active .live-view-btn{
+  background:#dff7f2;
+  color:#075e55;
+}
+
+.walking-navigation .navigation-card{
+  background:linear-gradient(135deg,#087c78,#046d69);
+}
+.walking-navigation .nav-maneuver-icon{
+  background:rgba(255,255,255,.17);
+}
+.walking-navigation .route-summary-card{
+  border-top:4px solid #087c78;
+}
+
+.walking-live-view-sheet{
+  position:absolute;
+  z-index:1200;
+  inset:0;
+  overflow:hidden;
+  background:#081311;
+  color:#fff;
+}
+.walking-live-view-sheet video{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  background:#101918;
+}
+.live-view-shade{
+  position:absolute;
+  inset:0;
+  background:linear-gradient(to bottom,rgba(0,0,0,.38),transparent 30%,transparent 64%,rgba(0,0,0,.54));
+  pointer-events:none;
+}
+.live-view-guidance{
+  position:absolute;
+  top:max(18px,env(safe-area-inset-top));
+  left:14px;
+  right:14px;
+  display:flex;
+  align-items:center;
+  gap:13px;
+  padding:13px 16px;
+  border-radius:20px;
+  background:rgba(5,104,94,.93);
+  box-shadow:0 12px 34px rgba(0,0,0,.25);
+  backdrop-filter:blur(8px);
+}
+.live-view-arrow{
+  width:58px;
+  height:58px;
+  display:grid;
+  place-items:center;
+  border-radius:17px;
+  background:rgba(255,255,255,.15);
+  font-size:38px;
+  font-weight:900;
+}
+.live-view-copy{display:grid;gap:4px;min-width:0}
+.live-view-copy strong{font-size:24px;line-height:1.05}
+.live-view-copy span{font-size:14px;color:rgba(255,255,255,.9)}
+.live-view-route-ribbon{
+  position:absolute;
+  left:50%;
+  bottom:150px;
+  transform:translateX(-50%) perspective(600px) rotateX(54deg);
+  display:grid;
+  gap:9px;
+  transform-origin:bottom center;
+}
+.live-view-route-ribbon i{
+  display:block;
+  width:92px;
+  height:28px;
+  border-radius:6px;
+  background:#1976ff;
+  clip-path:polygon(50% 0,100% 100%,66% 100%,50% 60%,34% 100%,0 100%);
+  box-shadow:0 0 18px rgba(25,118,255,.55);
+}
+.live-view-route-ribbon i:nth-child(2){transform:scale(.88)}
+.live-view-route-ribbon i:nth-child(3){transform:scale(.76)}
+.live-view-route-ribbon i:nth-child(4){transform:scale(.64)}
+.live-view-footer{
+  position:absolute;
+  left:12px;
+  right:12px;
+  bottom:max(12px,env(safe-area-inset-bottom));
+  min-height:72px;
+  border-radius:22px;
+  padding:10px;
+  background:rgba(255,255,255,.94);
+  color:#13201d;
+  display:grid;
+  grid-template-columns:48px 1fr auto;
+  align-items:center;
+  gap:10px;
+  box-shadow:0 14px 38px rgba(0,0,0,.25);
+  backdrop-filter:blur(12px);
+}
+.live-view-footer > div{display:grid;gap:2px}
+.live-view-footer small{color:#66736f}
+.live-view-close,
+.live-view-map-btn{
+  min-height:44px;
+  border-radius:999px;
+}
+.live-view-close{
+  width:44px;
+  padding:0;
+  background:#eef2f0;
+  color:#14201d;
+  font-size:27px;
+}
+.live-view-map-btn{
+  background:#0b7d70;
+  color:#fff;
+  padding:10px 16px;
+}
+.live-view-error{
+  position:absolute;
+  left:18px;
+  right:18px;
+  top:120px;
+  padding:12px 14px;
+  border-radius:14px;
+  background:rgba(145,28,28,.92);
+  color:#fff;
+  text-align:center;
+  font-weight:700;
+}
+
+@media(max-width:640px){
+  .navigation-active .navigation-card{
+    top:8px;
+    left:8px;
+    right:8px;
+    min-height:88px;
+    border-radius:18px;
+  }
+  .navigation-active .nav-maneuver-icon{
+    width:52px;height:52px;min-width:52px;font-size:32px;
+  }
+  .navigation-active .route-summary-card{
+    bottom:8px;
+    width:calc(100% - 12px);
+    border-radius:19px;
+  }
+  .map-compass-btn{
+    right:10px;
+    top:104px;
+    width:46px;
+    height:46px;
+  }
+  .live-view-copy strong{font-size:21px}
+}
