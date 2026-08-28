@@ -1159,7 +1159,6 @@ body.navigation-active .report-fab{
 
 #map .leaflet-map-pane{
   will-change:transform,rotate;
-  transition:rotate .08s linear;
 }
 
 .map-compass-btn{
@@ -1167,7 +1166,7 @@ body.navigation-active .report-fab{
   position:absolute;
   z-index:470;
   right:16px;
-  top:88px;
+  top:126px;
   width:48px;
   height:48px;
   padding:0;
@@ -1440,9 +1439,30 @@ body.navigation-active .report-fab{
   }
   .map-compass-btn{
     right:10px;
-    top:104px;
+    top:166px;
     width:46px;
     height:46px;
   }
   .live-view-copy strong{font-size:21px}
+}
+
+/* v18: camera countdown and cleaner status layout */
+.nearby-pill.camera-ahead{
+  color:#8b251e !important;
+  background:#fff1ef !important;
+  border-color:#f1b6ae !important;
+  font-weight:900;
+}
+.proximity-alert-card.camera-countdown{
+  border-color:#f1b6ae;
+}
+@media(max-width:640px){
+  .map-status{
+    max-width:calc(100% - 76px);
+  }
+  #nearbyBadge{
+    max-width:190px;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
 }
