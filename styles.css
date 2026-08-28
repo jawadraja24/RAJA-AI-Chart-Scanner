@@ -1466,3 +1466,277 @@ body.navigation-active .report-fab{
     text-overflow:ellipsis;
   }
 }
+
+/* ============================================================
+   RoadPulse v19 — authoritative mobile navigation layout fix
+   Fixes clipped turn card, overlaps and cramped controls.
+   ============================================================ */
+
+html, body{
+  max-width:100%;
+  overflow-x:hidden;
+}
+
+#map,
+.map-wrap,
+.map-panel{
+  touch-action:pan-x pan-y pinch-zoom;
+}
+
+@media (max-width:700px){
+  /* Keep every floating map card inside the phone viewport. */
+  .destination-search,
+  .navigation-card,
+  .route-summary-card,
+  .proximity-alert-card{
+    box-sizing:border-box;
+    max-width:none !important;
+  }
+
+  /* During active navigation the search bar is not useful and was creating
+     visual clutter behind the guidance card. Hide it completely on phones. */
+  body.navigation-active .destination-search{
+    display:none !important;
+  }
+
+  /* Main Google-style turn card: reset the old 50% translate rule.
+     This was the reason the card was visibly cut off on the left. */
+  body.navigation-active .navigation-card,
+  .navigation-active .navigation-card{
+    left:8px !important;
+    right:8px !important;
+    top:8px !important;
+    width:auto !important;
+    max-width:none !important;
+    margin:0 !important;
+    transform:none !important;
+    min-height:82px !important;
+    padding:11px 52px 11px 11px !important;
+    border-radius:17px !important;
+    grid-template-columns:48px minmax(0,1fr) !important;
+    gap:10px !important;
+  }
+
+  body.navigation-active .nav-maneuver-icon,
+  .navigation-active .nav-maneuver-icon{
+    width:48px !important;
+    height:48px !important;
+    min-width:48px !important;
+    border-radius:14px !important;
+    font-size:29px !important;
+  }
+
+  body.navigation-active .nav-guidance-copy,
+  .navigation-active .nav-guidance-copy{
+    min-width:0 !important;
+    overflow:hidden;
+  }
+
+  body.navigation-active .nav-guidance-copy strong,
+  .navigation-active .nav-guidance-copy strong{
+    max-width:100%;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    font-size:18px !important;
+    line-height:1.08 !important;
+  }
+
+  body.navigation-active #navInstructionDistance,
+  .navigation-active #navInstructionDistance{
+    font-size:20px !important;
+    line-height:1.05;
+  }
+
+  body.navigation-active .next-road-line,
+  .navigation-active .next-road-line{
+    min-width:0;
+    overflow:hidden;
+    white-space:nowrap;
+    text-overflow:ellipsis;
+  }
+
+  body.navigation-active .nav-stop-btn,
+  .navigation-active .nav-stop-btn{
+    position:absolute !important;
+    right:9px !important;
+    top:9px !important;
+    width:36px !important;
+    height:36px !important;
+    z-index:2;
+  }
+
+  /* Status pills sit below the turn card instead of under it. */
+  body.navigation-active .map-status,
+  .navigation-active .map-status{
+    top:101px !important;
+    left:8px !important;
+    right:66px !important;
+    width:auto !important;
+    max-width:none !important;
+    opacity:1 !important;
+    pointer-events:auto !important;
+    gap:5px !important;
+  }
+
+  body.navigation-active .map-status > *,
+  .navigation-active .map-status > *{
+    min-height:28px;
+    font-size:10px !important;
+    padding:5px 8px !important;
+  }
+
+  /* Compass stays on the right, under the turn card/status area. */
+  .map-compass-btn{
+    right:10px !important;
+    top:103px !important;
+    width:44px !important;
+    height:44px !important;
+    z-index:610 !important;
+  }
+
+  /* Hazard/camera card starts below the status row. */
+  body.navigation-active .proximity-alert-card,
+  .navigation-active .proximity-alert-card{
+    top:140px !important;
+    left:8px !important;
+    right:8px !important;
+    width:auto !important;
+    transform:none !important;
+  }
+
+  /* Bottom route card always fits inside the phone and safe area. */
+  body.navigation-active .route-summary-card,
+  .navigation-active .route-summary-card{
+    left:6px !important;
+    right:6px !important;
+    bottom:max(6px, env(safe-area-inset-bottom)) !important;
+    width:auto !important;
+    max-width:none !important;
+    transform:none !important;
+    margin:0 !important;
+    padding:10px !important;
+    border-radius:18px !important;
+    grid-template-columns:repeat(3,minmax(0,1fr)) !important;
+    gap:6px !important;
+  }
+
+  body.navigation-active .route-summary-card > div,
+  .navigation-active .route-summary-card > div{
+    min-width:0 !important;
+    padding:0 4px !important;
+    text-align:center;
+    border-right:0 !important;
+  }
+
+  body.navigation-active .route-summary-card > div > strong,
+  .navigation-active .route-summary-card > div > strong{
+    font-size:15px !important;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+
+  body.navigation-active .route-summary-card > div > span,
+  .navigation-active .route-summary-card > div > span{
+    font-size:9px !important;
+    white-space:nowrap;
+  }
+
+  body.navigation-active #routeTrafficDelayItem,
+  .navigation-active #routeTrafficDelayItem{
+    display:none !important;
+  }
+
+  body.navigation-active .route-control-group,
+  .navigation-active .route-control-group{
+    grid-column:1 / -1 !important;
+    display:grid !important;
+    grid-template-columns:repeat(5,minmax(0,1fr)) !important;
+    gap:5px !important;
+    overflow:visible !important;
+    width:100%;
+    padding-top:4px !important;
+  }
+
+  body.navigation-active .route-control-btn,
+  .navigation-active .route-control-btn{
+    min-width:0 !important;
+    min-height:36px !important;
+    padding:7px 3px !important;
+    font-size:9px !important;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+
+  /* In walking mode all five buttons fit on one row, including Live View. */
+  body.walking-navigation #walkingLiveViewBtn{
+    display:block;
+  }
+
+  /* Recenter should never cover the bottom route card. */
+  .map-recenter-btn{
+    right:10px !important;
+    bottom:132px !important;
+    width:44px !important;
+    height:44px !important;
+    padding:0 !important;
+    justify-content:center;
+  }
+
+  .map-recenter-btn span{
+    display:none !important;
+  }
+
+  /* Live View itself also respects mobile safe areas. */
+  .walking-live-view-sheet{
+    position:absolute !important;
+    inset:0 !important;
+  }
+
+  .live-view-guidance{
+    top:max(10px, env(safe-area-inset-top)) !important;
+    left:8px !important;
+    right:8px !important;
+    padding:10px 12px !important;
+    border-radius:17px !important;
+  }
+
+  .live-view-arrow{
+    width:48px !important;
+    height:48px !important;
+    font-size:31px !important;
+  }
+
+  .live-view-copy strong{
+    font-size:18px !important;
+  }
+
+  .live-view-footer{
+    left:8px !important;
+    right:8px !important;
+    bottom:max(8px, env(safe-area-inset-bottom)) !important;
+    border-radius:18px !important;
+  }
+}
+
+@media (max-width:380px){
+  body.navigation-active .navigation-card,
+  .navigation-active .navigation-card{
+    left:6px !important;
+    right:6px !important;
+    padding-left:9px !important;
+  }
+
+  body.navigation-active .route-control-btn,
+  .navigation-active .route-control-btn{
+    font-size:8px !important;
+    padding-left:2px !important;
+    padding-right:2px !important;
+  }
+
+  body.navigation-active .route-summary-card > div > strong,
+  .navigation-active .route-summary-card > div > strong{
+    font-size:14px !important;
+  }
+}
