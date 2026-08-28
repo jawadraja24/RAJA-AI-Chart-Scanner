@@ -72,6 +72,10 @@ let favoriteDestinations = loadStoredDestinations("roadpulse_favorites");
 let recentDestinations = loadStoredDestinations("roadpulse_recent");
 let navAudioContext = null;
 let navLastChimeKey = null;
+let mapBearingDeg = Number(safeLocalGet("roadpulse_map_bearing", "0")) || 0;
+let mapGestureState = null;
+let walkingLiveViewStream = null;
+let navSpeechVoices = [];
 let adminData = null;
 
 
@@ -91,7 +95,7 @@ const UI_TRANSLATIONS = {
     online:"Online", offline:"Offline", navigate:"Navigate", myGps:"My GPS",
     report:"Report", refresh:"Refresh", follow:"Following", followOff:"Follow",
     overview:"Overview", save:"Save", route:"Route", trafficDelay:"Traffic delay",
-    distance:"Distance", drive:"Drive", walk:"Walk", cycle:"Bike", driveMode:"Drive", walkMode:"Walk", cycleMode:"Bike", eta:"ETA", arrived:"You have arrived",
+    distance:"Distance", drive:"Drive", walk:"Walk", cycle:"Bike", driveMode:"Drive", walkMode:"Walk", cycleMode:"Bike", eta:"ETA", arrived:"You have arrived", liveView:"Live View", compass:"Compass", rotateMap:"Rotate map", resetNorth:"North up",
     routeUpdated:"Route updated.", voiceEnabled:"Voice alerts enabled.",
     hazardAhead:"Hazard ahead", accidentAhead:"Accident ahead",
     roadworkAhead:"Roadwork ahead", trafficAhead:"Traffic ahead",
@@ -104,7 +108,7 @@ const UI_TRANSLATIONS = {
     online:"Online", offline:"Offline", navigate:"Navigation", myGps:"Mein GPS",
     report:"Melden", refresh:"Aktualisieren", follow:"Folge Route", followOff:"Folgen",
     overview:"Übersicht", save:"Speichern", route:"Route", trafficDelay:"Verkehrsverzögerung",
-    distance:"Entfernung", drive:"Fahrzeit", walk:"Zu Fuß", cycle:"Rad", driveMode:"Auto", walkMode:"Zu Fuß", cycleMode:"Fahrrad", eta:"Ankunft", arrived:"Ziel erreicht",
+    distance:"Entfernung", drive:"Fahrzeit", walk:"Zu Fuß", cycle:"Rad", driveMode:"Auto", walkMode:"Zu Fuß", cycleMode:"Fahrrad", eta:"Ankunft", arrived:"Ziel erreicht", liveView:"Live View", compass:"Kompass", rotateMap:"Karte drehen", resetNorth:"Nordausrichtung",
     routeUpdated:"Route aktualisiert.", voiceEnabled:"Sprachhinweise aktiviert.",
     hazardAhead:"Gefahr voraus", accidentAhead:"Unfall voraus",
     roadworkAhead:"Baustelle voraus", trafficAhead:"Verkehr voraus",
@@ -310,6 +314,11 @@ function updateRouteControlLabels(){
     controls[2].textContent = `☆ ${t("save")}`;
     controls[3].textContent = `↻ ${t("route")}`;
   }
+
+  const liveBtn = byId("walkingLiveViewBtn");
+  if (liveBtn){
+    liveBtn.textContent = `◉ ${t("liveView") || "Live View"}`;
+  }
 }
 
 function setNavigationMode(mode){
@@ -372,6 +381,11 @@ function updateNavigationModeUI(){
       : (navigationMode === "bicycle" ? `🚲 ${t("cycleMode")}` : `🚗 ${t("driveMode")}`);
     modeBadge.textContent = modeText;
     modeBadge.dataset.mode = navigationMode;
+  }
+
+  const liveViewBtn = byId("walkingLiveViewBtn");
+  if (liveViewBtn){
+    liveViewBtn.classList.toggle("hidden", navigationMode !== "pedestrian");
   }
 
   updateTrafficClarity();
@@ -674,6 +688,123 @@ function ensureMap(){
       lastNavigationCameraUpdateAt = Date.now();
     }
   });
+
+  installRoadPulseMapGestures();
+  applyRoadPulseMapBearing(mapBearingDeg, false);
+}
+
+function normalizeBearing(value){
+  let n = Number(value || 0) % 360;
+  if (n < 0) n += 360;
+  return n;
+}
+
+function angleBetweenTouches(t1,t2){
+  return Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX) * 180 / Math.PI;
+}
+
+function distanceBetweenTouches(t1,t2){
+  return Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+}
+
+function shortestAngleDelta(a,b){
+  let d = b - a;
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return d;
+}
+
+function applyRoadPulseMapBearing(value, persist=true){
+  mapBearingDeg = normalizeBearing(value);
+  const pane = map?.getPane?.("mapPane");
+  if (pane){
+    // CSS individual rotate composes with Leaflet's own transform,
+    // so panning/zoom transforms are not overwritten.
+    pane.style.transformOrigin = "50% 50%";
+    pane.style.rotate = `${mapBearingDeg}deg`;
+  }
+
+  const compass = byId("mapCompassBtn");
+  if (compass){
+    compass.style.setProperty("--map-bearing", `${-mapBearingDeg}deg`);
+    compass.title = mapBearingDeg === 0
+      ? "Map is north-up"
+      : `Reset map to north (${Math.round(mapBearingDeg)}°)`;
+  }
+
+  if (persist){
+    safeLocalSet("roadpulse_map_bearing", String(Math.round(mapBearingDeg * 10) / 10));
+  }
+}
+
+function resetMapBearing(){
+  applyRoadPulseMapBearing(0);
+}
+
+function installRoadPulseMapGestures(){
+  const el = byId("map");
+  if (!el || el.dataset.roadpulseRotateReady === "1") return;
+  el.dataset.roadpulseRotateReady = "1";
+
+  el.addEventListener("touchstart", event=>{
+    if (event.touches.length !== 2){
+      mapGestureState = null;
+      return;
+    }
+
+    const a = event.touches[0];
+    const b = event.touches[1];
+    mapGestureState = {
+      startAngle:angleBetweenTouches(a,b),
+      startDistance:distanceBetweenTouches(a,b),
+      startBearing:mapBearingDeg,
+      rotating:false
+    };
+  }, {passive:true});
+
+  el.addEventListener("touchmove", event=>{
+    if (!mapGestureState || event.touches.length !== 2) return;
+
+    const a = event.touches[0];
+    const b = event.touches[1];
+    const angle = angleBetweenTouches(a,b);
+    const distance = distanceBetweenTouches(a,b);
+    const angleDelta = shortestAngleDelta(mapGestureState.startAngle, angle);
+    const distanceRatio = mapGestureState.startDistance
+      ? distance / mapGestureState.startDistance
+      : 1;
+
+    // A clear twist becomes rotate. A mostly pinch gesture is left to Leaflet
+    // so normal pinch zoom continues to work.
+    if (!mapGestureState.rotating){
+      const twistStrong = Math.abs(angleDelta) >= 7;
+      const pinchStrong = Math.abs(distanceRatio - 1) >= 0.10;
+      if (twistStrong && !pinchStrong){
+        mapGestureState.rotating = true;
+        try{ map?.touchZoom?.disable(); }catch(_){}
+        try{ map?.dragging?.disable(); }catch(_){}
+      }
+    }
+
+    if (mapGestureState.rotating){
+      event.preventDefault();
+      applyRoadPulseMapBearing(mapGestureState.startBearing + angleDelta, false);
+      navFollowMode = false;
+      updateFollowButton();
+    }
+  }, {passive:false});
+
+  const finish = ()=>{
+    if (mapGestureState?.rotating){
+      applyRoadPulseMapBearing(mapBearingDeg, true);
+      try{ map?.touchZoom?.enable(); }catch(_){}
+      try{ map?.dragging?.enable(); }catch(_){}
+    }
+    mapGestureState = null;
+  };
+
+  el.addEventListener("touchend", finish, {passive:true});
+  el.addEventListener("touchcancel", finish, {passive:true});
 }
 
 function startGpsWatch(){
@@ -1478,6 +1609,7 @@ function formatRouteDistance(meters){
 }
 
 function stopNavigation(clearDestination=true){
+  closeWalkingLiveView();
   navigationActive = false;
   navRoute = null;
   navRoutePoints = [];
@@ -1551,6 +1683,7 @@ function updateNavigationProgress(){
     navCurrentInstructionIndex = nextIndex;
     const instruction = navInstructions[nextIndex];
     renderNavigationInstruction(instruction);
+    syncWalkingLiveViewInstruction();
     maybeSpeakTurnInstruction(instruction, nextIndex);
   }
 
@@ -1851,6 +1984,28 @@ function maybeSpeakTurnInstruction(instruction,index){
   }, 330);
 }
 
+function refreshNavigationVoices(){
+  if (!("speechSynthesis" in window)) return [];
+  navSpeechVoices = window.speechSynthesis.getVoices() || [];
+  return navSpeechVoices;
+}
+
+function chooseNavigationVoice(language){
+  const voices = refreshNavigationVoices();
+  if (!voices.length) return null;
+
+  const lang = String(language || "en-GB").toLowerCase();
+  const primary = lang.split("-")[0];
+
+  const candidates = voices.filter(v=>{
+    const vl = String(v.lang || "").toLowerCase();
+    return vl === lang || vl.startsWith(primary + "-") || vl === primary;
+  });
+
+  const local = candidates.find(v=>v.localService);
+  return local || candidates[0] || voices.find(v=>v.default) || voices[0] || null;
+}
+
 function speakNavigationMessage(message){
   if (
     !message ||
@@ -1863,11 +2018,97 @@ function speakNavigationMessage(message){
 
   const u = new SpeechSynthesisUtterance(message);
   u.lang = userLanguage || "en-GB";
-  u.rate = 1.0;
+  u.rate = 0.94;
   u.pitch = 1.0;
+  u.volume = 1.0;
 
+  const preferred = chooseNavigationVoice(u.lang);
+  if (preferred) u.voice = preferred;
+
+  // Cancel stale instructions so the driver hears the newest command clearly.
   window.speechSynthesis.cancel();
+  window.speechSynthesis.resume();
   window.speechSynthesis.speak(u);
+}
+
+if ("speechSynthesis" in window){
+  refreshNavigationVoices();
+  window.speechSynthesis.addEventListener?.("voiceschanged", refreshNavigationVoices);
+}
+
+function syncWalkingLiveViewInstruction(){
+  const instruction = byId("navInstruction")?.textContent || "Continue";
+  const distance = byId("navInstructionDistance")?.textContent || "";
+  const road = byId("navNextRoad")?.textContent || "";
+  const icon = byId("navManeuverIcon")?.textContent || "↑";
+
+  const title = byId("liveViewInstruction");
+  const meta = byId("liveViewInstructionMeta");
+  const arrow = byId("liveViewArrow");
+
+  if (title) title.textContent = instruction;
+  if (meta){
+    meta.textContent = [distance, road && road !== "—" ? road : ""].filter(Boolean).join(" • ");
+  }
+  if (arrow) arrow.textContent = icon;
+}
+
+async function openWalkingLiveView(){
+  if (navigationMode !== "pedestrian"){
+    setNavigationMode("pedestrian");
+  }
+
+  const sheet = byId("walkingLiveViewSheet");
+  const video = byId("walkingLiveViewVideo");
+  const errorBox = byId("walkingLiveViewError");
+  if (!sheet || !video) return;
+
+  sheet.classList.remove("hidden");
+  syncWalkingLiveViewInstruction();
+
+  if (errorBox){
+    errorBox.textContent = "";
+    errorBox.classList.add("hidden");
+  }
+
+  if (!navigator.mediaDevices?.getUserMedia){
+    if (errorBox){
+      errorBox.textContent = "Camera Live View is not supported by this browser.";
+      errorBox.classList.remove("hidden");
+    }
+    return;
+  }
+
+  try{
+    closeWalkingLiveView(false);
+    sheet.classList.remove("hidden");
+
+    walkingLiveViewStream = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:{ideal:"environment"}},
+      audio:false
+    });
+    video.srcObject = walkingLiveViewStream;
+    await video.play().catch(()=>{});
+  }catch(err){
+    if (errorBox){
+      errorBox.textContent = "Camera permission is needed for Walking Live View.";
+      errorBox.classList.remove("hidden");
+    }
+  }
+}
+
+function closeWalkingLiveView(hide=true){
+  if (walkingLiveViewStream){
+    walkingLiveViewStream.getTracks().forEach(track=>track.stop());
+    walkingLiveViewStream = null;
+  }
+
+  const video = byId("walkingLiveViewVideo");
+  if (video) video.srcObject = null;
+
+  if (hide){
+    byId("walkingLiveViewSheet")?.classList.add("hidden");
+  }
 }
 
 
@@ -2484,6 +2725,61 @@ async function adminLogout(){
   routeByHash();
 }
 
+async function changeAdminPassword(){
+  const current = byId("adminCurrentPassword")?.value || "";
+  const next = byId("adminNewPassword")?.value || "";
+  const confirm = byId("adminConfirmPassword")?.value || "";
+  const msg = byId("adminPasswordChangeMsg");
+
+  if (!msg) return;
+
+  msg.classList.add("hidden");
+  msg.classList.remove("error");
+
+  if (next.length < 4){
+    msg.textContent = "New PIN / password must be at least 4 characters.";
+    msg.classList.remove("hidden");
+    msg.classList.add("error");
+    return;
+  }
+
+  if (next !== confirm){
+    msg.textContent = "New PIN / password confirmation does not match.";
+    msg.classList.remove("hidden");
+    msg.classList.add("error");
+    return;
+  }
+
+  const r = await fetch("/api/admin/change-password", {
+    method:"POST",
+    credentials:"include",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({
+      current_password:current,
+      new_password:next,
+      confirm_password:confirm
+    })
+  });
+
+  let data = {};
+  try{ data = await r.json(); }catch(_){}
+
+  if (!r.ok){
+    msg.textContent = data.detail || "Could not change Admin PIN / password.";
+    msg.classList.remove("hidden");
+    msg.classList.add("error");
+    return;
+  }
+
+  ["adminCurrentPassword","adminNewPassword","adminConfirmPassword"].forEach(id=>{
+    const el = byId(id);
+    if (el) el.value = "";
+  });
+
+  msg.textContent = "Admin PIN / password changed successfully.";
+  msg.classList.remove("hidden");
+}
+
 async function loadAdmin(){
   const r = await fetch("/api/admin/dashboard", {credentials:"include"});
   if (!r.ok){
@@ -2666,6 +2962,7 @@ window.userLogout = userLogout;
 window.showAuthTab = showAuthTab;
 window.adminLogin = adminLogin;
 window.adminLogout = adminLogout;
+window.changeAdminPassword = changeAdminPassword;
 window.centerOnUser = centerOnUser;
 window.refreshAllLiveData = refreshAllLiveData;
 window.openReportSheet = openReportSheet;
@@ -2687,6 +2984,9 @@ window.enableRouteFollow = enableRouteFollow;
 window.updateNavigationCamera = updateNavigationCamera;
 window.showRouteOverview = showRouteOverview;
 window.saveCurrentDestination = saveCurrentDestination;
+window.resetMapBearing = resetMapBearing;
+window.openWalkingLiveView = openWalkingLiveView;
+window.closeWalkingLiveView = closeWalkingLiveView;
 
 window.setReportStatus = setReportStatus;
 window.updateSetting = updateSetting;
