@@ -43,6 +43,8 @@ let proximitySettings = {
 };
 let voiceEnabledByUser = safeLocalGet("roadpulse_voice", "on") !== "off";
 let lastAlertedAt = new Map();
+let cameraCountdownState = new Map();
+const CAMERA_COUNTDOWN_STEPS = [500, 400, 300, 200, 100];
 let dismissedUntil = new Map();
 let currentProximityTarget = null;
 let proximityEvalTimer = null;
@@ -718,8 +720,8 @@ function applyRoadPulseMapBearing(value, persist=true){
   mapBearingDeg = normalizeBearing(value);
   const pane = map?.getPane?.("mapPane");
   if (pane){
-    // CSS individual rotate composes with Leaflet's own transform,
-    // so panning/zoom transforms are not overwritten.
+    // Keep Leaflet's translate/zoom transform untouched.
+    // CSS rotate is composed separately so native panning stays responsive.
     pane.style.transformOrigin = "50% 50%";
     pane.style.rotate = `${mapBearingDeg}deg`;
   }
@@ -745,6 +747,14 @@ function installRoadPulseMapGestures(){
   const el = byId("map");
   if (!el || el.dataset.roadpulseRotateReady === "1") return;
   el.dataset.roadpulseRotateReady = "1";
+
+  let rafPending = false;
+  let pendingBearing = mapBearingDeg;
+
+  const drawBearing = ()=>{
+    rafPending = false;
+    applyRoadPulseMapBearing(pendingBearing, false);
+  };
 
   el.addEventListener("touchstart", event=>{
     if (event.touches.length !== 2){
@@ -774,21 +784,26 @@ function installRoadPulseMapGestures(){
       ? distance / mapGestureState.startDistance
       : 1;
 
-    // A clear twist becomes rotate. A mostly pinch gesture is left to Leaflet
-    // so normal pinch zoom continues to work.
+    // Let Leaflet handle a normal pinch. Only switch to rotation when
+    // the user clearly twists two fingers and is not strongly pinching.
     if (!mapGestureState.rotating){
-      const twistStrong = Math.abs(angleDelta) >= 7;
-      const pinchStrong = Math.abs(distanceRatio - 1) >= 0.10;
+      const twistStrong = Math.abs(angleDelta) >= 10;
+      const pinchStrong = Math.abs(distanceRatio - 1) >= 0.075;
       if (twistStrong && !pinchStrong){
         mapGestureState.rotating = true;
         try{ map?.touchZoom?.disable(); }catch(_){}
-        try{ map?.dragging?.disable(); }catch(_){}
       }
     }
 
     if (mapGestureState.rotating){
       event.preventDefault();
-      applyRoadPulseMapBearing(mapGestureState.startBearing + angleDelta, false);
+      pendingBearing = normalizeBearing(mapGestureState.startBearing + angleDelta);
+
+      if (!rafPending){
+        rafPending = true;
+        requestAnimationFrame(drawBearing);
+      }
+
       navFollowMode = false;
       updateFollowButton();
     }
@@ -796,9 +811,12 @@ function installRoadPulseMapGestures(){
 
   const finish = ()=>{
     if (mapGestureState?.rotating){
-      applyRoadPulseMapBearing(mapBearingDeg, true);
+      if (rafPending){
+        rafPending = false;
+        applyRoadPulseMapBearing(pendingBearing, false);
+      }
+      applyRoadPulseMapBearing(pendingBearing, true);
       try{ map?.touchZoom?.enable(); }catch(_){}
-      try{ map?.dragging?.enable(); }catch(_){}
     }
     mapGestureState = null;
   };
@@ -806,7 +824,6 @@ function installRoadPulseMapGestures(){
   el.addEventListener("touchend", finish, {passive:true});
   el.addEventListener("touchcancel", finish, {passive:true});
 }
-
 function startGpsWatch(){
   if (!navigator.geolocation){
     setGpsBadge("GPS not supported", false);
@@ -2512,14 +2529,22 @@ function evaluateProximityAlerts(){
     if (nearbyBadge){
       nearbyBadge.textContent =
         `Nearby: none < ${Math.round(proximitySettings.maxDistanceM)}m`;
+      nearbyBadge.classList.remove("good", "camera-ahead");
     }
     currentProximityTarget = null;
     return;
   }
 
   if (nearbyBadge){
-    nearbyBadge.textContent =
-      `Nearby: ${nearest.type} ${formatDistance(nearest.distanceM)}`;
+    if (nearest.type === "camera"){
+      nearbyBadge.textContent =
+        `📷 Camera ahead ${formatCameraCountdownDistance(nearest.distanceM)}`;
+      nearbyBadge.classList.add("camera-ahead");
+    }else{
+      nearbyBadge.textContent =
+        `Nearby: ${nearest.type} ${formatDistance(nearest.distanceM)}`;
+      nearbyBadge.classList.remove("camera-ahead");
+    }
     nearbyBadge.classList.add("good");
   }
 
@@ -2545,6 +2570,7 @@ function renderProximityAlert(target){
     "urgent",
     target.distanceM <= proximitySettings.urgentDistanceM
   );
+  card.classList.toggle("camera-countdown", target.type === "camera");
 }
 
 function alertTitleForType(type){
@@ -2556,6 +2582,55 @@ function formatDistance(meters){
     return `${Math.max(10, Math.round(meters/10)*10)} m`;
   }
   return `${(meters/1000).toFixed(1)} km`;
+}
+
+function formatCameraCountdownDistance(meters){
+  const d = Math.max(0, Number(meters || 0));
+  if (d <= 100) return "100 m";
+  if (d <= 200) return "200 m";
+  if (d <= 300) return "300 m";
+  if (d <= 400) return "400 m";
+  if (d <= 500) return "500 m";
+  return formatDistance(d);
+}
+
+function cameraCountdownMessage(distance){
+  return `${localizedAlertTitle("camera")} ${localizedInMeters(distance)}.`;
+}
+
+function maybeSpeakCameraCountdown(target){
+  if (target.type !== "camera") return false;
+
+  // Keep the existing country-compliance safeguard for voice warnings.
+  // Visual countdown still appears even when voice is restricted.
+  if (!cameraVoiceAlertsAllowed()) return true;
+
+  const distance = Number(target.distanceM || 0);
+  let state = cameraCountdownState.get(target.id);
+
+  // Reset after moving well away so the sequence works again next time.
+  if (!state || distance > 650){
+    state = {announced:[], lastDistance:distance};
+  }
+
+  // If GPS jumps backwards substantially, allow thresholds to re-arm.
+  if (state.lastDistance != null && distance > state.lastDistance + 180){
+    state.announced = state.announced.filter(step => step > distance);
+  }
+
+  const crossed = CAMERA_COUNTDOWN_STEPS.find(step =>
+    distance <= step && !state.announced.includes(step)
+  );
+
+  if (crossed){
+    state.announced.push(crossed);
+    lastAlertedAt.set(target.id, Date.now());
+    speakNavigationMessage(cameraCountdownMessage(crossed));
+  }
+
+  state.lastDistance = distance;
+  cameraCountdownState.set(target.id, state);
+  return true;
 }
 
 function voiceMessageForTarget(target){
@@ -2572,6 +2647,12 @@ function maybeSpeakProximityAlert(target){
     return;
   }
 
+  // Cameras use exact 500/400/300/200/100 metre countdown announcements.
+  if (target.type === "camera"){
+    maybeSpeakCameraCountdown(target);
+    return;
+  }
+
   const now = Date.now();
   const previous = lastAlertedAt.get(target.id) || 0;
   const cooldownMs = proximitySettings.cooldownS * 1000;
@@ -2581,16 +2662,7 @@ function maybeSpeakProximityAlert(target){
   }
 
   lastAlertedAt.set(target.id, now);
-
-  const utterance = new SpeechSynthesisUtterance(
-    voiceMessageForTarget(target)
-  );
-  utterance.lang = userLanguage || "en-GB";
-  utterance.rate = 1.0;
-  utterance.pitch = 1.0;
-
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utterance);
+  speakNavigationMessage(voiceMessageForTarget(target));
 }
 
 function toggleVoiceAlerts(){
