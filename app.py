@@ -210,6 +210,11 @@ app = FastAPI(title="RoadPulse AI API")
 class PasswordPayload(BaseModel):
     password: str
 
+class AdminPasswordChangePayload(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str
+
 class UserRegisterPayload(BaseModel):
     name: str
     email: EmailStr
@@ -261,23 +266,60 @@ def verify_password(password: str, salt_b64: str, expected_b64: str) -> bool:
     actual = hash_password(password, salt)
     return hmac.compare_digest(actual, expected_b64)
 
+def _verify_admin_file_password(password: str, data: dict[str, Any]) -> bool:
+    try:
+        salt = base64.b64decode(data["salt"])
+        expected = base64.b64decode(data["hash"])
+        actual = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode(),
+            salt,
+            int(data.get("iterations", PBKDF2_ITERATIONS)),
+        )
+        return hmac.compare_digest(expected, actual)
+    except Exception:
+        return False
+
 def verify_admin_password(password: str) -> bool:
+    # If the owner changed the PIN/password from inside RoadPulse,
+    # that persistent /data/admin.json value becomes authoritative.
+    file_data = None
+    if ADMIN_FILE.exists():
+        try:
+            file_data = json.loads(ADMIN_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            file_data = None
+
+    if file_data and file_data.get("override_env") is True:
+        return _verify_admin_file_password(password, file_data)
+
+    # Initial Railway/admin secret can still come from the environment.
     env_password = os.getenv("ROADPULSE_ADMIN_PASSWORD")
     if env_password:
         return hmac.compare_digest(password, env_password)
 
-    if not ADMIN_FILE.exists():
-        return False
-    data = json.loads(ADMIN_FILE.read_text(encoding="utf-8"))
-    salt = base64.b64decode(data["salt"])
-    expected = base64.b64decode(data["hash"])
-    actual = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode(),
-        salt,
-        int(data.get("iterations", PBKDF2_ITERATIONS)),
-    )
-    return hmac.compare_digest(expected, actual)
+    if file_data:
+        return _verify_admin_file_password(password, file_data)
+
+    return False
+
+def save_admin_password(password: str) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    salt = os.urandom(16)
+    payload = {
+        "salt": base64.b64encode(salt).decode("ascii"),
+        "hash": hash_password(password, salt),
+        "iterations": PBKDF2_ITERATIONS,
+        "role": "super_admin",
+        # Once changed in the admin panel, do not keep accepting the old
+        # ROADPULSE_ADMIN_PASSWORD environment value.
+        "override_env": True,
+        "updated_at": int(time.time()),
+    }
+
+    temp_file = ADMIN_FILE.with_suffix(".tmp")
+    temp_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    temp_file.replace(ADMIN_FILE)
 
 def make_session(kind: str, subject: str, ttl_seconds: int) -> str:
     exp = int(time.time()) + ttl_seconds
@@ -889,6 +931,27 @@ def admin_login(payload: PasswordPayload, response: Response):
 def admin_logout(response: Response):
     response.delete_cookie("roadpulse_admin")
     return {"ok": True}
+
+@app.post("/api/admin/change-password")
+def change_admin_password(
+    payload: AdminPasswordChangePayload,
+    request: Request,
+):
+    require_admin(request)
+
+    if not verify_admin_password(payload.current_password):
+        raise HTTPException(401, "Current PIN/password is incorrect")
+
+    new_password = payload.new_password.strip()
+    if new_password != payload.confirm_password.strip():
+        raise HTTPException(400, "New PIN/password confirmation does not match")
+    if len(new_password) < 4:
+        raise HTTPException(400, "Use at least 4 characters")
+    if hmac.compare_digest(payload.current_password, new_password):
+        raise HTTPException(400, "New PIN/password must be different")
+
+    save_admin_password(new_password)
+    return {"ok": True, "message": "Admin PIN/password changed successfully"}
 
 @app.get("/api/admin/dashboard")
 def dashboard(request: Request):
