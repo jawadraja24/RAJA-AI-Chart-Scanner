@@ -1,4 +1,5 @@
 let roadPulseInstallPrompt = null;
+let roadPulseSwReloading = false;
 
 function roadPulseIsInstalled(){
   return (
@@ -8,7 +9,10 @@ function roadPulseIsInstalled(){
 }
 
 function roadPulseIsIOS(){
-  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+  return (
+    /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
 }
 
 function roadPulseIsAndroid(){
@@ -37,7 +41,7 @@ function openRoadPulseInstallHelp(kind){
   if (kind === "ios"){
     title.textContent = "Install RoadPulse on iPhone / iPad";
     body.innerHTML = `
-      <p>Apple does not allow websites to install silently. Safari can add RoadPulse as a full-screen Home Screen app.</p>
+      <p>Safari installs RoadPulse through the Home Screen menu.</p>
       <ol>
         <li>Tap the <strong>Share</strong> button in Safari.</li>
         <li>Choose <strong>Add to Home Screen</strong>.</li>
@@ -91,8 +95,6 @@ function updateInstallButton(){
 
   if (roadPulseIsIOS()){
     btn.title = "Install RoadPulse on iPhone / iPad";
-  }else if (roadPulseInstallPrompt){
-    btn.title = "Install RoadPulse AI";
   }else{
     btn.title = "Install RoadPulse AI";
   }
@@ -104,7 +106,6 @@ async function installRoadPulseApp(){
     return;
   }
 
-  // Android/Chrome/Edge/Samsung: direct official PWA prompt when available.
   if (roadPulseInstallPrompt){
     const promptEvent = roadPulseInstallPrompt;
     roadPulseInstallPrompt = null;
@@ -127,13 +128,11 @@ async function installRoadPulseApp(){
     return;
   }
 
-  // iOS Safari does not expose beforeinstallprompt.
   if (roadPulseIsIOS()){
     openRoadPulseInstallHelp("ios");
     return;
   }
 
-  // Other browsers: reliable manual fallback instead of a dead "Preparing" button.
   openRoadPulseInstallHelp(roadPulseIsAndroid() ? "android" : "other");
 }
 
@@ -150,16 +149,30 @@ window.addEventListener("appinstalled", ()=>{
   showPwaInstallToast("RoadPulse AI installed successfully.");
 });
 
-window.addEventListener("load", ()=>{
+window.addEventListener("load", async ()=>{
   updateInstallButton();
 
-  if ("serviceWorker" in navigator){
-    navigator.serviceWorker
-      .register("/service-worker.js", {scope:"/"})
-      .catch(err=>{
-        console.error("RoadPulse service worker registration failed:", err);
-        showPwaInstallToast("Install service could not start. Refresh and try again.");
-      });
+  if (!("serviceWorker" in navigator)) return;
+
+  // Only reload on controller replacement when this page was already controlled.
+  // This makes a newly deployed app.js/styles.css take effect in installed PWAs.
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", ()=>{
+    if (!hadController || roadPulseSwReloading) return;
+    roadPulseSwReloading = true;
+    window.location.reload();
+  });
+
+  try{
+    const registration = await navigator.serviceWorker.register(
+      "/service-worker.js",
+      {scope:"/", updateViaCache:"none"}
+    );
+
+    registration.update().catch(()=>{});
+  }catch(err){
+    console.error("RoadPulse service worker registration failed:", err);
+    showPwaInstallToast("Install service could not start. Refresh and try again.");
   }
 });
 
