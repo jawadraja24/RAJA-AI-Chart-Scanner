@@ -1,13 +1,13 @@
-const CACHE_VERSION = "roadpulse-v22-smooth-map-1";
+const CACHE_VERSION = "roadpulse-v23-native-rotate-1";
 const APP_CACHE = `${CACHE_VERSION}-app`;
 const CDN_CACHE = `${CACHE_VERSION}-cdn`;
 
 const APP_SHELL = [
   "/",
-  "/assets/styles.css?v=webv22smooth1",
-  "/assets/app.js?v=webv22smooth1",
-  "/assets/pwa.js?v=webv22smooth1",
-  "/manifest.webmanifest?v=webv22smooth1",
+  "/assets/styles.css?v=webv23native1",
+  "/assets/app.js?v=webv23native1",
+  "/assets/pwa.js?v=webv23native1",
+  "/manifest.webmanifest?v=webv23native1",
   "/assets/icons/icon-192.png",
   "/assets/icons/icon-512.png",
   "/assets/icons/icon-512-maskable.png",
@@ -123,7 +123,7 @@ self.addEventListener("fetch", event => {
 
   // Leaflet library files can be cached. Map tiles intentionally stay network
   // controlled to avoid huge/off-policy tile caches.
-  if (url.hostname === "unpkg.com"){
+  if (url.hostname === "unpkg.com" || url.hostname === "cdn.jsdelivr.net"){
     event.respondWith(
       caches.open(CDN_CACHE).then(async cache => {
         const cached = await cache.match(request);
