@@ -76,10 +76,15 @@ let navAudioContext = null;
 let navLastChimeKey = null;
 let mapBearingDeg = Number(safeLocalGet("roadpulse_map_bearing", "0")) || 0;
 let routeRotateRedrawTimer = null;
+let navigationHeadingUp = false;
 let navSearchAbortController = null;
 let navSearchRequestSeq = 0;
 let lastGpsFixAt = 0;
 let gpsWatchStartedAt = 0;
+let lastRawGpsFix = null;
+let lastReliableHeading = null;
+let lastReliableHeadingAt = 0;
+let currentDisplayPosition = null;
 let lastUserMapGestureAt = 0;
 let mapResizeTimer = null;
 let rotateTouchPointers = new Map();
@@ -341,6 +346,9 @@ function setNavigationMode(mode){
   }
 
   navigationMode = nextMode;
+  if (navigationMode === "pedestrian"){
+    stopNavigationHeadingUp(true);
+  }
   safeLocalSet("roadpulse_nav_mode", navigationMode);
   updateNavigationModeUI();
 
@@ -518,7 +526,7 @@ window.addEventListener("load", async ()=>{
   }
 
   window.__ROADPULSE_BOOT_OK__ = true;
-  console.log("RoadPulse Web V1.3 drive + walk + bike loaded");
+  console.log("RoadPulse Web V1.4 mobile navigation fix loaded");
 });
 window.addEventListener("online", updateNetworkBadge);
 window.addEventListener("offline", updateNetworkBadge);
@@ -780,6 +788,7 @@ function ensureMap(){
   // Rotation is a user gesture too. While navigating, rotating the map should
   // release automatic follow so the camera does not fight the user's fingers.
   map.on("rotatestart", ()=>{
+    stopNavigationHeadingUp(false);
     noteUserGesture();
     stopFollowForUserGesture();
   });
@@ -790,6 +799,12 @@ function ensureMap(){
 
     mapBearingDeg = normalizeBearing(bearing);
     updateRoadPulseCompass();
+    if (currentDisplayPosition){
+      updateUserHeadingMarker(
+        [currentDisplayPosition.lat,currentDisplayPosition.lng],
+        currentDisplayPosition.heading
+      );
+    }
 
     // Some mobile GPUs defer SVG repaint during a bearing change. Redraw the
     // navigation path after the fingers settle so the route can never vanish.
@@ -801,10 +816,12 @@ function ensureMap(){
       try{ navRouteLayer?.bringToFront?.(); }catch(_){}
     }, 70);
 
-    clearTimeout(window.__roadpulseBearingSaveTimer);
-    window.__roadpulseBearingSaveTimer = setTimeout(()=>{
-      safeLocalSet("roadpulse_map_bearing", String(Math.round(mapBearingDeg * 10) / 10));
-    }, 180);
+    if (!navigationHeadingUp){
+      clearTimeout(window.__roadpulseBearingSaveTimer);
+      window.__roadpulseBearingSaveTimer = setTimeout(()=>{
+        safeLocalSet("roadpulse_map_bearing", String(Math.round(mapBearingDeg * 10) / 10));
+      }, 180);
+    }
   });
 
   installRoadPulseMapGestures();
@@ -832,6 +849,30 @@ function normalizeBearing(value){
   let n = Number(value || 0) % 360;
   if (n < 0) n += 360;
   return n;
+}
+
+function nullableFiniteNumber(value){
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function blendBearing(fromDeg,toDeg,amount){
+  const from = normalizeBearing(fromDeg);
+  const delta = shortestBearingDelta(from,toDeg);
+  const alpha = Math.max(0,Math.min(1,Number(amount) || 0));
+  return normalizeBearing(from + delta * alpha);
+}
+
+function headingScreenRotation(heading,mapBearing){
+  return normalizeBearing(Number(heading) + Number(mapBearing || 0));
+}
+
+function routeSnapDistanceLimit(mode,accuracy){
+  const base = mode === "pedestrian" ? 12 : (mode === "bicycle" ? 18 : 25);
+  const cap = mode === "pedestrian" ? 30 : (mode === "bicycle" ? 45 : 60);
+  const gpsAllowance = Math.max(0,Number(accuracy) || 0) * 0.25;
+  return Math.min(cap,base + gpsAllowance);
 }
 
 function updateRoadPulseCompass(){
@@ -885,7 +926,7 @@ function resetMapBearing(event){
   }
 
   // Do not let a previous heading-up animation immediately rotate the map back.
-  try{ map.stopHeadingUp?.(); }catch(_){}
+  stopNavigationHeadingUp(false);
 
   const startBearing = normalizeBearing(Number(map.getBearing?.()) || 0);
   const delta = shortestBearingDelta(startBearing, 0);
@@ -916,6 +957,16 @@ function resetMapBearing(event){
     safeLocalSet("roadpulse_map_bearing", "0");
   };
   requestAnimationFrame(frame);
+}
+
+function stopNavigationHeadingUp(resetNorth=false){
+  const wasActive = navigationHeadingUp;
+  try{ map?.stopHeadingUp?.(); }catch(_){}
+  navigationHeadingUp = false;
+
+  if (resetNorth && wasActive && map && typeof map.setBearing === "function"){
+    applyRoadPulseMapBearing(0);
+  }
 }
 
 function installRoadPulseHighSensitivityRotation(){
@@ -1037,6 +1088,7 @@ function installRoadPulseMapGestures(){
 }
 
 function noteRoadPulseRotationGesture(){
+  stopNavigationHeadingUp(false);
   lastUserMapGestureAt = Date.now();
   if (navigationActive){
     navFollowMode = false;
@@ -1050,9 +1102,14 @@ function startGpsWatch(force=false){
     return;
   }
 
-  if (force && watchId !== null){
-    try{ navigator.geolocation.clearWatch(watchId); }catch(_){}
-    watchId = null;
+  if (force){
+    if (watchId !== null){
+      try{ navigator.geolocation.clearWatch(watchId); }catch(_){}
+      watchId = null;
+    }
+    lastRawGpsFix = null;
+    lastReliableHeading = null;
+    lastReliableHeadingAt = 0;
   }
 
   if (watchId !== null) return;
@@ -1096,7 +1153,7 @@ function onGpsPosition(pos){
     return;
   }
 
-  if (Date.now() - timestamp > 30000){
+  if (Date.now() - timestamp > 30000 || timestamp > Date.now() + 5000){
     return;
   }
 
@@ -1111,50 +1168,90 @@ function onGpsPosition(pos){
 
   let lat = rawLat;
   let lng = rawLng;
-  let speed = Number(pos.coords.speed);
-  let heading = Number(pos.coords.heading);
+  let speed = nullableFiniteNumber(pos.coords.speed);
+  let nativeHeading = nullableFiniteNumber(pos.coords.heading);
 
-  speed = Number.isFinite(speed) && speed >= 0 ? speed : null;
-  heading = Number.isFinite(heading) && heading >= 0 && heading <= 360
-    ? heading
+  speed = speed != null && speed >= 0 && speed <= 100 ? speed : null;
+  nativeHeading = nativeHeading != null && nativeHeading >= 0 && nativeHeading <= 360
+    ? normalizeBearing(nativeHeading)
     : null;
 
   const previous = currentPosition;
+  const previousRaw = lastRawGpsFix;
+  let rawDistance = null;
+  let dt = null;
+  let impliedSpeed = null;
+  let derivedHeading = null;
 
-  if (previous?.timestamp){
-    const dt = Math.max(0.05, (timestamp - previous.timestamp) / 1000);
-    const rawDistance = haversineMeters(
-      previous.lat,
-      previous.lng,
+  if (previousRaw?.timestamp){
+    if (timestamp <= previousRaw.timestamp) return;
+
+    dt = Math.max(0.05, (timestamp - previousRaw.timestamp) / 1000);
+    rawDistance = haversineMeters(
+      previousRaw.lat,
+      previousRaw.lng,
       rawLat,
       rawLng
     );
-    const impliedSpeed = rawDistance / dt;
+    impliedSpeed = rawDistance / dt;
 
     const jumpAllowance = Math.max(
       120,
       accuracy * 2.5,
-      Number(previous.accuracy || 0) * 2.5
+      Number(previousRaw.accuracy || 0) * 2.5
     );
 
     if (
       dt < 10 &&
       rawDistance > jumpAllowance &&
       impliedSpeed > 75 &&
-      accuracy > 25
+      (accuracy > 25 || impliedSpeed > 100)
     ){
       setGpsBadge("GPS stabilizing…", false);
       return;
     }
 
     if (
-      Number(previous.accuracy || 9999) <= 60 &&
+      Number(previous?.accuracy || 9999) <= 60 &&
       accuracy > 120 &&
       rawDistance > Math.max(90, accuracy * 0.6)
     ){
       setGpsBadge(`GPS weak · ±${Math.round(accuracy)}m`, false);
       return;
     }
+
+    const noiseFloor = Math.max(
+      3,
+      Math.min(18,Math.max(accuracy,Number(previousRaw.accuracy || accuracy)) * 0.30)
+    );
+
+    if (
+      speed == null &&
+      dt <= 10 &&
+      rawDistance >= noiseFloor &&
+      Number.isFinite(impliedSpeed) &&
+      impliedSpeed <= 65
+    ){
+      speed = impliedSpeed;
+    }
+
+    const headingDistanceFloor = Math.max(4,noiseFloor);
+    if (
+      dt <= 10 &&
+      rawDistance >= headingDistanceFloor &&
+      impliedSpeed >= 0.7 &&
+      impliedSpeed <= 65
+    ){
+      derivedHeading = bearingDegrees(
+        previousRaw.lat,
+        previousRaw.lng,
+        rawLat,
+        rawLng
+      );
+    }
+  }
+
+  if (previous?.timestamp && previousRaw?.timestamp){
 
     let alpha = accuracy <= 15
       ? 1
@@ -1171,55 +1268,64 @@ function onGpsPosition(pos){
     lat = previous.lat + (rawLat - previous.lat) * alpha;
     lng = previous.lng + (rawLng - previous.lng) * alpha;
 
-    if (speed == null && dt <= 10){
-      const derivedSpeed = rawDistance / dt;
-      if (Number.isFinite(derivedSpeed) && derivedSpeed <= 65){
-        speed = derivedSpeed;
-      }
-    }
-
-    if (heading == null && speed != null && speed >= 0.7){
-      heading = previous.heading ?? null;
-    }
   }
+
+  let heading = null;
+  let headingSource = "none";
+  const movingSpeed = Number(speed || 0);
+
+  if (nativeHeading != null && movingSpeed >= 0.7){
+    heading = nativeHeading;
+    headingSource = "native";
+  }else if (derivedHeading != null && (movingSpeed >= 0.7 || Number(impliedSpeed || 0) >= 0.7)){
+    heading = derivedHeading;
+    headingSource = "derived";
+  }else if (
+    movingSpeed >= 0.7 &&
+    lastReliableHeading != null &&
+    timestamp - lastReliableHeadingAt <= 3000
+  ){
+    heading = lastReliableHeading;
+    headingSource = "held";
+  }
+
+  if (heading != null && previousRaw?.timestamp && previous?.heading != null){
+    const turnSize = angleDifference(previous.heading,heading);
+    const smoothing = turnSize > 75
+      ? 0.78
+      : (headingSource === "native" ? 0.58 : 0.66);
+    heading = blendBearing(previous.heading,heading,smoothing);
+  }
+
+  if (heading != null && headingSource !== "held"){
+    lastReliableHeading = heading;
+    lastReliableHeadingAt = timestamp;
+  }
+
+  lastRawGpsFix = {
+    lat:rawLat,
+    lng:rawLng,
+    accuracy,
+    timestamp
+  };
 
   currentPosition = {
     lat,
     lng,
+    rawLat,
+    rawLng,
     accuracy,
     speed,
     heading,
+    headingSource,
     timestamp
   };
   lastGpsFixAt = Date.now();
 
-  const latlng = [currentPosition.lat, currentPosition.lng];
-
-  if (!userMarker){
-    userMarker = L.circleMarker(latlng, {
-      radius:9,
-      color:"#ffffff",
-      weight:3,
-      fillColor:"#2d70d6",
-      fillOpacity:1,
-      interactive:false
-    }).addTo(map);
-  }else{
-    userMarker.setLatLng(latlng);
-  }
-
-  if (!userAccuracyCircle){
-    userAccuracyCircle = L.circle(latlng, {
-      radius:Math.min(currentPosition.accuracy, 1500),
-      color:"#2d70d6",
-      weight:1,
-      fillOpacity:.08,
-      interactive:false
-    }).addTo(map);
-  }else{
-    userAccuracyCircle.setLatLng(latlng);
-    userAccuracyCircle.setRadius(Math.min(currentPosition.accuracy, 1500));
-  }
+  const displayPosition = renderGpsPosition();
+  const latlng = displayPosition
+    ? [displayPosition.lat,displayPosition.lng]
+    : [currentPosition.lat,currentPosition.lng];
 
   const waitMs = gpsWatchStartedAt ? Date.now() - gpsWatchStartedAt : 0;
   const canUseInitialFix = currentPosition.accuracy <= 100 || waitMs >= 10000;
@@ -1261,7 +1367,6 @@ function onGpsPosition(pos){
     speedBadge.textContent = `${speedKmh ?? 0} km/h`;
   }
 
-  updateUserHeadingMarker(latlng);
   evaluateProximityAlerts();
   updateNavigationProgress();
 
@@ -1272,6 +1377,47 @@ function onGpsPosition(pos){
   ){
     updateNavigationCamera();
   }
+}
+
+function renderGpsPosition(){
+  if (!map || !currentPosition) return null;
+
+  const display = getNavigationDisplayPosition(currentPosition);
+  currentDisplayPosition = display;
+
+  const displayLatLng = [display.lat,display.lng];
+  const rawLatLng = [currentPosition.lat,currentPosition.lng];
+
+  if (!userMarker){
+    userMarker = L.circleMarker(displayLatLng, {
+      radius:9,
+      color:"#ffffff",
+      weight:3,
+      fillColor:"#2d70d6",
+      fillOpacity:1,
+      interactive:false
+    }).addTo(map);
+  }else{
+    userMarker.setLatLng(displayLatLng);
+  }
+
+  // The accuracy circle stays on the filtered GPS fix. Only the visual
+  // navigation marker is route-matched, so GPS uncertainty remains honest.
+  if (!userAccuracyCircle){
+    userAccuracyCircle = L.circle(rawLatLng, {
+      radius:Math.min(currentPosition.accuracy, 1500),
+      color:"#2d70d6",
+      weight:1,
+      fillOpacity:.08,
+      interactive:false
+    }).addTo(map);
+  }else{
+    userAccuracyCircle.setLatLng(rawLatLng);
+    userAccuracyCircle.setRadius(Math.min(currentPosition.accuracy, 1500));
+  }
+
+  updateUserHeadingMarker(displayLatLng,display.heading);
+  return display;
 }
 
 function onGpsError(err){
@@ -1312,9 +1458,11 @@ function centerOnUser(){
 
   if (map && currentPosition){
     const zoom = navigationActive ? navigationFollowZoom() : Math.max(16, map.getZoom());
+    const display = getNavigationDisplayPosition(currentPosition);
+    currentDisplayPosition = display;
     map.stop();
     map.flyTo(
-      [currentPosition.lat, currentPosition.lng],
+      [display.lat,display.lng],
       zoom,
       {animate:true, duration:.45}
     );
@@ -1358,10 +1506,24 @@ function updateNavigationCamera(force=false){
   if (!force && now - lastNavigationCameraUpdateAt < 700) return;
   lastNavigationCameraUpdateAt = now;
 
-  const target = [currentPosition.lat,currentPosition.lng];
+  const display = getNavigationDisplayPosition(currentPosition);
+  currentDisplayPosition = display;
+  const target = [display.lat,display.lng];
   const zoom = navigationFollowZoom();
+  const cameraHeading = nullableFiniteNumber(display.heading);
 
   try{ map.stop(); }catch(_){}
+
+  const headingUpMinSpeed = navigationMode === "car" ? 2.0 : 1.2;
+  if (
+    navigationMode !== "pedestrian" &&
+    Number(currentPosition.speed || 0) >= headingUpMinSpeed &&
+    cameraHeading != null &&
+    typeof map.setHeading === "function"
+  ){
+    navigationHeadingUp = true;
+    map.setHeading(cameraHeading,{ease:0.22,deadzone:0.8});
+  }
 
   if (Math.abs(map.getZoom() - zoom) >= 1){
     map.setView(target, zoom, {
@@ -1378,12 +1540,12 @@ function updateNavigationCamera(force=false){
   }
 }
 
-function updateUserHeadingMarker(latlng){
+function updateUserHeadingMarker(latlng,displayHeading=currentPosition?.heading){
   if (!map || !currentPosition) return;
 
-  const heading = Number(currentPosition.heading);
+  const heading = nullableFiniteNumber(displayHeading);
   const speed = Math.max(0, Number(currentPosition.speed || 0));
-  const hasHeading = Number.isFinite(heading) && heading >= 0 && speed >= 0.35;
+  const hasHeading = heading != null && heading >= 0 && speed >= 0.7;
 
   if (!hasHeading){
     if (userHeadingMarker && map.hasLayer(userHeadingMarker)){
@@ -1392,9 +1554,12 @@ function updateUserHeadingMarker(latlng){
     return;
   }
 
+  const bearing = nullableFiniteNumber(map.getBearing?.()) ?? mapBearingDeg;
+  const screenHeading = headingScreenRotation(heading,bearing);
+
   const icon = L.divIcon({
     className:"roadpulse-heading-marker-wrap",
-    html:`<div class="roadpulse-heading-marker" style="transform:rotate(${heading}deg)">▲</div>`,
+    html:`<div class="roadpulse-heading-marker" style="transform:rotate(${screenHeading}deg)">▲</div>`,
     iconSize:[34,34],
     iconAnchor:[17,17]
   });
@@ -1978,7 +2143,10 @@ function applyNavigationRoute(data, isReroute=false){
   navRoute = data;
   if (["car","pedestrian","bicycle"].includes(data.travelMode)) navigationMode = data.travelMode;
   safeLocalSet("roadpulse_nav_mode", navigationMode);
-  navRoutePoints = data.points || [];
+  navRoutePoints = normalizeRoutePoints(data.points,currentPosition);
+  if (navRoutePoints.length < 2){
+    throw new Error("Route provider returned invalid geometry");
+  }
   navInstructions = data.instructions || [];
   navCurrentInstructionIndex = 0;
   navLastProgressIndex = 0;
@@ -2029,6 +2197,7 @@ function applyNavigationRoute(data, isReroute=false){
   });
 
   renderDestinationMarker();
+  renderGpsPosition();
   updateTrafficClarity();
 
   if (!isReroute){
@@ -2051,10 +2220,49 @@ function applyNavigationRoute(data, isReroute=false){
   requestNavigationWakeLock();
   updateRouteSummary(data.summary || {});
   updateNavigationProgress();
+  updateNavigationCamera(true);
 
   if (isReroute && voiceEnabledByUser && proximitySettings.voice){
     speakNavigationMessage(t("routeUpdated"));
   }
+}
+
+function normalizeRoutePoints(points,origin){
+  if (!Array.isArray(points)) return [];
+
+  const pairs = points
+    .filter(point=>Array.isArray(point) && point.length >= 2)
+    .map(point=>[Number(point[0]),Number(point[1])])
+    .filter(point=>Number.isFinite(point[0]) && Number.isFinite(point[1]));
+
+  if (pairs.length < 2) return [];
+
+  const validLatLng = point=>
+    point[0] >= -90 && point[0] <= 90 &&
+    point[1] >= -180 && point[1] <= 180;
+
+  const directValid = pairs.every(validLatLng);
+  const swapped = pairs.map(point=>[point[1],point[0]]);
+  const swappedValid = swapped.every(validLatLng);
+
+  if (!directValid && swappedValid) return swapped;
+  if (!directValid) return [];
+  if (!swappedValid || !origin) return pairs;
+
+  const originLat = Number(origin.lat);
+  const originLng = Number(origin.lng);
+  if (!Number.isFinite(originLat) || !Number.isFinite(originLng)) return pairs;
+
+  const directDistance = haversineMeters(originLat,originLng,pairs[0][0],pairs[0][1]);
+  const swappedDistance = haversineMeters(originLat,originLng,swapped[0][0],swapped[0][1]);
+
+  // Route geometry should start near the requested origin. Swap only when the
+  // evidence is overwhelming, avoiding accidental flips near 0° latitude.
+  if (swappedDistance < 5000 && swappedDistance * 5 < directDistance){
+    return swapped;
+  }
+
+  return pairs;
 }
 
 function updateRouteSummary(summary){
@@ -2099,6 +2307,7 @@ function formatRouteDistance(meters){
 }
 
 function stopNavigation(clearDestination=true){
+  stopNavigationHeadingUp(true);
   closeWalkingLiveView();
   navigationActive = false;
   navRoute = null;
@@ -2135,6 +2344,7 @@ function stopNavigation(clearDestination=true){
   }
 
   updateTrafficClarity();
+  renderGpsPosition();
   updateDestinationActionButton();
   updateFollowButton();
 }
@@ -2242,36 +2452,134 @@ function updateNavigationProgress(){
   }
 }
 
-function nearestRoutePoint(lat,lng){
-  if (navRoutePoints.length === 0) return null;
+function projectPointToRouteSegment(lat,lng,a,b,segmentIndex=0){
+  if (
+    !Array.isArray(a) || !Array.isArray(b) ||
+    !Number.isFinite(Number(a[0])) || !Number.isFinite(Number(a[1])) ||
+    !Number.isFinite(Number(b[0])) || !Number.isFinite(Number(b[1]))
+  ){
+    return null;
+  }
 
-  const findBest = (start,end)=>{
-    let bestIndex = start;
-    let bestDistance = Infinity;
+  const originLatRad = Number(lat) * Math.PI / 180;
+  const metersPerLatDegree = 111132;
+  const metersPerLngDegree = Math.max(1,111320 * Math.cos(originLatRad));
+  const ax = (Number(a[1]) - Number(lng)) * metersPerLngDegree;
+  const ay = (Number(a[0]) - Number(lat)) * metersPerLatDegree;
+  const bx = (Number(b[1]) - Number(lng)) * metersPerLngDegree;
+  const by = (Number(b[0]) - Number(lat)) * metersPerLatDegree;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSquared = dx * dx + dy * dy;
+  const t = lengthSquared > 0
+    ? Math.max(0,Math.min(1,-(ax * dx + ay * dy) / lengthSquared))
+    : 0;
+  const projectedX = ax + dx * t;
+  const projectedY = ay + dy * t;
 
-    for (let i=start; i<end; i++){
-      const p = navRoutePoints[i];
-      const d = haversineMeters(lat,lng,p[0],p[1]);
-      if (d < bestDistance){
-        bestDistance = d;
-        bestIndex = i;
-      }
-    }
-
-    return {index:bestIndex, distanceM:bestDistance};
+  return {
+    lat:Number(lat) + projectedY / metersPerLatDegree,
+    lng:Number(lng) + projectedX / metersPerLngDegree,
+    distanceM:Math.hypot(projectedX,projectedY),
+    segmentIndex,
+    t,
+    bearing:bearingDegrees(Number(a[0]),Number(a[1]),Number(b[0]),Number(b[1]))
   };
+}
 
-  if (navLastProgressIndex > 0 && navRoutePoints.length > 350){
-    const start = Math.max(0, navLastProgressIndex - 40);
-    const end = Math.min(navRoutePoints.length, navLastProgressIndex + 320);
-    const local = findBest(start,end);
+function findNearestRouteProjection(points,lat,lng,startSegment=0,endSegment=null){
+  if (!Array.isArray(points) || points.length < 2) return null;
 
-    if (local.distanceM <= 500){
-      return local;
+  const segmentCount = points.length - 1;
+  const start = Math.max(0,Math.min(segmentCount - 1,Number(startSegment) || 0));
+  const end = Math.max(start + 1,Math.min(segmentCount,endSegment == null ? segmentCount : Number(endSegment)));
+  let best = null;
+
+  for (let i=start; i<end; i++){
+    const candidate = projectPointToRouteSegment(lat,lng,points[i],points[i+1],i);
+    if (candidate && (!best || candidate.distanceM < best.distanceM)){
+      best = candidate;
     }
   }
 
-  return findBest(0, navRoutePoints.length);
+  return best;
+}
+
+function nearestRouteProjection(lat,lng){
+  if (!Array.isArray(navRoutePoints) || navRoutePoints.length < 2) return null;
+
+  if (navLastProgressIndex > 0 && navRoutePoints.length > 350){
+    const start = Math.max(0,navLastProgressIndex - 40);
+    const end = Math.min(navRoutePoints.length - 1,navLastProgressIndex + 320);
+    const local = findNearestRouteProjection(navRoutePoints,lat,lng,start,end);
+    if (local && local.distanceM <= 500) return local;
+  }
+
+  return findNearestRouteProjection(navRoutePoints,lat,lng);
+}
+
+function nearestRoutePoint(lat,lng){
+  const projection = nearestRouteProjection(lat,lng);
+  if (!projection) return null;
+  return {
+    ...projection,
+    index:projection.t >= 0.5
+      ? projection.segmentIndex + 1
+      : projection.segmentIndex
+  };
+}
+
+function getNavigationDisplayPosition(position=currentPosition){
+  if (!position) return null;
+
+  const fallback = {
+    ...position,
+    snapped:false,
+    snapDistanceM:null,
+    routeSegmentIndex:null
+  };
+
+  if (
+    !navigationActive ||
+    !Array.isArray(navRoutePoints) ||
+    navRoutePoints.length < 2 ||
+    Number(position.accuracy || 9999) > 150
+  ){
+    return fallback;
+  }
+
+  const projection = nearestRouteProjection(position.lat,position.lng);
+  if (!projection) return fallback;
+
+  const snapLimit = routeSnapDistanceLimit(navigationMode,position.accuracy);
+  if (projection.distanceM > snapLimit) return fallback;
+
+  const speed = Math.max(0,Number(position.speed || 0));
+  const gpsHeading = nullableFiniteNumber(position.heading);
+  const headingDifference = gpsHeading == null
+    ? 0
+    : angleDifference(gpsHeading,projection.bearing);
+
+  // Do not jump to a nearby parallel/opposite carriageway when the device has
+  // a reliable direction of travel that conflicts with the route direction.
+  if (speed >= 2.5 && gpsHeading != null && headingDifference > 100){
+    return fallback;
+  }
+
+  const matchedHeading = speed >= 1.0 && (gpsHeading == null || headingDifference <= 75)
+    ? projection.bearing
+    : gpsHeading;
+
+  return {
+    ...position,
+    lat:projection.lat,
+    lng:projection.lng,
+    heading:matchedHeading,
+    headingSource:matchedHeading === projection.bearing ? "route" : position.headingSource,
+    snapped:true,
+    snapDistanceM:projection.distanceM,
+    routeSegmentIndex:projection.segmentIndex
+  };
 }
 
 function findNextInstructionIndex(progressIndex){
@@ -2758,6 +3066,7 @@ function enableRouteFollow(){
 }
 
 function showRouteOverview(){
+  stopNavigationHeadingUp(true);
   navFollowMode = false;
   updateFollowButton();
 
@@ -2829,19 +3138,38 @@ function calculateRemainingRouteMeters(){
   }
 
   let total = 0;
-  const start = Math.max(
+  let start = Math.max(
     0,
     Math.min(navLastProgressIndex,navRoutePoints.length-1)
   );
 
   if (currentPosition){
-    const p = navRoutePoints[start];
-    total += haversineMeters(
-      currentPosition.lat,
-      currentPosition.lng,
-      p[0],
-      p[1]
-    );
+    const projection = nearestRouteProjection(currentPosition.lat,currentPosition.lng);
+    const projectedNextIndex = projection ? projection.segmentIndex + 1 : -1;
+
+    if (
+      projection &&
+      projection.distanceM <= 500 &&
+      projectedNextIndex >= start &&
+      projectedNextIndex < navRoutePoints.length
+    ){
+      start = projectedNextIndex;
+      const next = navRoutePoints[start];
+      total += haversineMeters(
+        projection.lat,
+        projection.lng,
+        next[0],
+        next[1]
+      );
+    }else{
+      const p = navRoutePoints[start];
+      total += haversineMeters(
+        currentPosition.lat,
+        currentPosition.lng,
+        p[0],
+        p[1]
+      );
+    }
   }
 
   for (let i=start; i<navRoutePoints.length-1; i++){
