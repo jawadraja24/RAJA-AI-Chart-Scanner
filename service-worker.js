@@ -1,13 +1,13 @@
-const CACHE_VERSION = "roadpulse-v20-mobile-stable-1";
+const CACHE_VERSION = "roadpulse-v21-touch-rotate-1";
 const APP_CACHE = `${CACHE_VERSION}-app`;
 const CDN_CACHE = `${CACHE_VERSION}-cdn`;
 
 const APP_SHELL = [
   "/",
-  "/assets/styles.css?v=webv20mobile1",
-  "/assets/app.js?v=webv20mobile1",
-  "/assets/pwa.js?v=webv20mobile1",
-  "/manifest.webmanifest?v=webv20mobile1",
+  "/assets/styles.css?v=webv21rotate1",
+  "/assets/app.js?v=webv21rotate1",
+  "/assets/pwa.js?v=webv21rotate1",
+  "/manifest.webmanifest?v=webv21rotate1",
   "/assets/icons/icon-192.png",
   "/assets/icons/icon-512.png",
   "/assets/icons/icon-512-maskable.png",
