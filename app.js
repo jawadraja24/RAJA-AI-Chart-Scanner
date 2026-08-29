@@ -75,9 +75,6 @@ let recentDestinations = loadStoredDestinations("roadpulse_recent");
 let navAudioContext = null;
 let navLastChimeKey = null;
 let mapBearingDeg = Number(safeLocalGet("roadpulse_map_bearing", "0")) || 0;
-let mapGestureState = null;
-let mapRotateRaf = 0;
-let mapRotatePendingBearing = null;
 let routeRotateRedrawTimer = null;
 let navSearchAbortController = null;
 let navSearchRequestSeq = 0;
@@ -681,14 +678,18 @@ function ensureMap(){
     zoomAnimation:true,
     fadeAnimation:true,
     markerZoomAnimation:true,
+    inertia:true,
+    inertiaDeceleration:2600,
+    inertiaMaxSpeed:1800,
+    easeLinearity:0.2,
 
-    // Google-Maps-style two-finger rotation. These options are ignored by
-    // plain Leaflet, so the map still works if the rotate add-on fails to load.
+    // Google-Maps-style gestures: one finger pans; two fingers pinch and twist.
+    // Rotation is handled only by leaflet-rotate, not by custom touch listeners.
     rotate:rotatePluginReady,
     bearing:rotatePluginReady ? normalizeBearing(mapBearingDeg) : 0,
-    touchRotate:false,
-    dragRotate:false,
-    shiftKeyRotate:false,
+    touchRotate:rotatePluginReady,
+    dragRotate:rotatePluginReady,
+    shiftKeyRotate:rotatePluginReady,
     rotateClockwise:true,
     preventPageGestures:true,
     rotateControl:false
@@ -826,21 +827,6 @@ function normalizeBearing(value){
   return n;
 }
 
-function angleBetweenTouches(t1,t2){
-  return Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX) * 180 / Math.PI;
-}
-
-function distanceBetweenTouches(t1,t2){
-  return Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-}
-
-function shortestAngleDelta(a,b){
-  let d = b - a;
-  while (d > 180) d -= 360;
-  while (d < -180) d += 360;
-  return d;
-}
-
 function updateRoadPulseCompass(){
   const compass = byId("mapCompassBtn");
   if (!compass) return;
@@ -861,7 +847,6 @@ function applyRoadPulseMapBearing(value, persist=true){
     const actual = Number(map.getBearing?.());
     mapBearingDeg = Number.isFinite(actual) ? normalizeBearing(actual) : next;
   }else{
-    // Graceful fallback when the rotate add-on is unavailable.
     mapBearingDeg = 0;
   }
 
@@ -879,87 +864,31 @@ function resetMapBearing(){
 function installRoadPulseMapGestures(){
   if (!map) return;
 
+  // Leaflet owns normal one-finger panning and pinch zoom. The rotation add-on
+  // owns two-finger twist. Keeping a single gesture engine avoids the v21/v22
+  // conflict where RoadPulse and Leaflet both reacted to the same touches.
   try{ map.dragging?.enable(); }catch(_){}
   try{ map.touchZoom?.enable(); }catch(_){}
   try{ map.doubleClickZoom?.enable(); }catch(_){}
   try{ map.scrollWheelZoom?.enable(); }catch(_){}
 
+  if (typeof map.setBearing !== "function"){
+    console.error("RoadPulse: leaflet-rotate did not load; map rotation is unavailable.");
+    return;
+  }
+
+  try{ map.touchRotate?.enable?.(); }catch(err){
+    console.warn("RoadPulse: touch rotation could not be enabled", err);
+  }
+  try{ map.dragRotate?.enable?.(); }catch(_){}
+  try{ map.shiftKeyRotate?.enable?.(); }catch(_){}
+
+  // Keep the browser from hijacking a two-finger gesture as page zoom/scroll.
   const el = map.getContainer();
-  if (!el || el.dataset.roadpulseSmoothRotate === "1") return;
-  el.dataset.roadpulseSmoothRotate = "1";
-
-  // The add-on's stock touch rotation intentionally has a large twist
-  // threshold. RoadPulse uses a lower-deadzone bearing-aware overlay instead:
-  // Leaflet continues handling the same two fingers for pinch/drag while this
-  // handler only updates map bearing. No CSS rotation, no touchZoom disable,
-  // and no preventDefault => smooth simultaneous pinch + twist.
-  const begin = event=>{
-    if (!map || typeof map.setBearing !== "function") return;
-    if (event.touches?.length !== 2){
-      mapGestureState = null;
-      return;
-    }
-
-    const a = event.touches[0];
-    const b = event.touches[1];
-    mapGestureState = {
-      startAngle:angleBetweenTouches(a,b),
-      startBearing:Number(map.getBearing?.() || 0),
-      active:false
-    };
-  };
-
-  const move = event=>{
-    if (!mapGestureState || event.touches?.length !== 2) return;
-    if (!map || typeof map.setBearing !== "function") return;
-
-    const a = event.touches[0];
-    const b = event.touches[1];
-    const angle = angleBetweenTouches(a,b);
-    const delta = shortestAngleDelta(mapGestureState.startAngle, angle);
-
-    // Tiny dead-zone prevents accidental rotation during a pure pinch, while
-    // still feeling immediate instead of waiting for a ~30° twist.
-    if (!mapGestureState.active){
-      if (Math.abs(delta) < 2.5) return;
-      mapGestureState.active = true;
-      noteRoadPulseRotationGesture();
-    }
-
-    mapRotatePendingBearing = normalizeBearing(
-      mapGestureState.startBearing + delta
-    );
-
-    if (!mapRotateRaf){
-      mapRotateRaf = requestAnimationFrame(()=>{
-        mapRotateRaf = 0;
-        if (mapRotatePendingBearing == null) return;
-        try{ map.setBearing(mapRotatePendingBearing); }catch(_){}
-      });
-    }
-  };
-
-  const end = event=>{
-    if (event.touches?.length === 2){
-      begin(event);
-      return;
-    }
-
-    if (mapRotateRaf){
-      cancelAnimationFrame(mapRotateRaf);
-      mapRotateRaf = 0;
-    }
-    if (mapRotatePendingBearing != null && typeof map?.setBearing === "function"){
-      try{ map.setBearing(mapRotatePendingBearing); }catch(_){}
-    }
-    mapRotatePendingBearing = null;
-    mapGestureState = null;
-  };
-
-  el.addEventListener("touchstart", begin, {passive:true});
-  el.addEventListener("touchmove", move, {passive:true});
-  el.addEventListener("touchend", end, {passive:true});
-  el.addEventListener("touchcancel", end, {passive:true});
+  if (el){
+    el.style.touchAction = "none";
+    el.style.overscrollBehavior = "none";
+  }
 }
 
 function noteRoadPulseRotationGesture(){
