@@ -6,6 +6,10 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
   "background_color": "#ffffff",
   "theme_color": "#0f7c4b",
   "orientation": "any",
@@ -33,10 +37,6 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ],
-  "display_override": [
-    "standalone",
-    "minimal-ui"
   ],
   "prefer_related_applications": false
 }
