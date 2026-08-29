@@ -1158,7 +1158,7 @@ body.navigation-active .report-fab{
    ============================================================ */
 
 #map .leaflet-map-pane{
-  will-change:transform,rotate;
+  will-change:transform;
 }
 
 .map-compass-btn{
@@ -1767,19 +1767,6 @@ html, body{
   -webkit-tap-highlight-color:transparent;
 }
 
-/* Never CSS-rotate Leaflet's interactive map pane. Leaflet's internal
-   coordinate system stays north-up, so one-finger drag and pinch remain exact. */
-#map .leaflet-map-pane{
-  rotate:none !important;
-  will-change:transform !important;
-}
-
-/* Leaflet core has no safe full-map bearing support. The user's heading arrow
-   still rotates, while this obsolete control stays out of the touch area. */
-.map-compass-btn{
-  display:none !important;
-}
-
 .leaflet-container{
   font-family:inherit;
 }
@@ -2136,4 +2123,47 @@ html, body{
     min-width:72px !important;
     font-size:10px !important;
   }
+}
+
+
+/* ============================================================
+   RoadPulse v22 — authoritative bearing-aware map interaction
+   Keep this block last. Rotation is performed by leaflet-rotate / map.setBearing,
+   never by CSS `rotate`, so routes, markers and touch coordinates stay aligned.
+   ============================================================ */
+#map{
+  touch-action:none !important;
+  overscroll-behavior:none;
+}
+
+#map .leaflet-map-pane{
+  will-change:transform;
+}
+
+#map .leaflet-overlay-pane,
+#map .leaflet-marker-pane,
+#map .leaflet-shadow-pane,
+#map .leaflet-tooltip-pane,
+#map .leaflet-popup-pane,
+#map .leaflet-route-pane{
+  will-change:transform;
+}
+
+.map-compass-btn{
+  display:grid !important;
+  place-items:center;
+  touch-action:manipulation;
+}
+
+/* Route is always above tiles/traffic and never steals finger gestures. */
+#map .leaflet-route-pane{
+  pointer-events:none !important;
+  z-index:430 !important;
+}
+
+/* Let Leaflet own all map gestures. Floating UI keeps normal tap behavior. */
+#map .leaflet-pane,
+#map .leaflet-control-container{
+  -webkit-user-select:none;
+  user-select:none;
 }
