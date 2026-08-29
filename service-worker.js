@@ -1,140 +1,181 @@
-const CACHE_VERSION = "roadpulse-v23-native-rotate-1";
-const APP_CACHE = `${CACHE_VERSION}-app`;
-const CDN_CACHE = `${CACHE_VERSION}-cdn`;
+const ROADPULSE_PWA_BUILD = "webv24google1";
+let roadPulseInstallPrompt = null;
+let roadPulseSwReloading = false;
 
-const APP_SHELL = [
-  "/",
-  "/assets/styles.css?v=webv23native1",
-  "/assets/app.js?v=webv23native1",
-  "/assets/pwa.js?v=webv23native1",
-  "/manifest.webmanifest?v=webv23native1",
-  "/assets/icons/icon-192.png",
-  "/assets/icons/icon-512.png",
-  "/assets/icons/icon-512-maskable.png",
-  "/assets/icons/apple-touch-icon.png"
-];
-
-self.addEventListener("install", event => {
-  event.waitUntil(
-    caches.open(APP_CACHE)
-      .then(cache => Promise.all(
-        APP_SHELL.map(url =>
-          cache.add(url).catch(err => {
-            console.warn("RoadPulse cache skipped:", url, err);
-          })
-        )
-      ))
-      .then(() => self.skipWaiting())
+function roadPulseIsInstalled(){
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true
   );
-});
+}
 
-self.addEventListener("activate", event => {
-  event.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(
-        keys
-          .filter(key => key.startsWith("roadpulse-") && !key.startsWith(CACHE_VERSION))
-          .map(key => caches.delete(key))
-      ))
-      .then(() => self.clients.claim())
+function roadPulseIsIOS(){
+  return (
+    /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
   );
+}
+
+function roadPulseIsAndroid(){
+  return /android/i.test(navigator.userAgent);
+}
+
+function showPwaInstallToast(message){
+  const toast = document.getElementById("pwaInstallToast");
+  if (!toast) return;
+
+  toast.textContent = message;
+  toast.classList.remove("hidden");
+
+  clearTimeout(window.__roadpulsePwaToastTimer);
+  window.__roadpulsePwaToastTimer = setTimeout(()=>{
+    toast.classList.add("hidden");
+  }, 4500);
+}
+
+function openRoadPulseInstallHelp(kind){
+  const sheet = document.getElementById("installHelpSheet");
+  const title = document.getElementById("installHelpTitle");
+  const body = document.getElementById("installHelpBody");
+  if (!sheet || !title || !body) return;
+
+  if (kind === "ios"){
+    title.textContent = "Install RoadPulse on iPhone / iPad";
+    body.innerHTML = `
+      <p>Safari installs RoadPulse through the Home Screen menu.</p>
+      <ol>
+        <li>Tap the <strong>Share</strong> button in Safari.</li>
+        <li>Choose <strong>Add to Home Screen</strong>.</li>
+        <li>Tap <strong>Add</strong>.</li>
+      </ol>
+    `;
+  }else if (kind === "android"){
+    title.textContent = "Install RoadPulse on Android";
+    body.innerHTML = `
+      <p>Your browser has not exposed the direct install prompt yet.</p>
+      <ol>
+        <li>Open the browser menu <strong>⋮</strong>.</li>
+        <li>Choose <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li>
+        <li>Confirm <strong>Install</strong>.</li>
+      </ol>
+    `;
+  }else{
+    title.textContent = "Install RoadPulse AI";
+    body.innerHTML = `
+      <p>Use your browser's app installation option.</p>
+      <ol>
+        <li>Open the browser menu.</li>
+        <li>Choose <strong>Install RoadPulse AI</strong> / <strong>Install app</strong>.</li>
+        <li>Confirm the installation.</li>
+      </ol>
+    `;
+  }
+
+  sheet.classList.remove("hidden");
+}
+
+function closeRoadPulseInstallHelp(){
+  document.getElementById("installHelpSheet")?.classList.add("hidden");
+}
+
+function updateInstallButton(){
+  const btn = document.getElementById("installAppBtn");
+  if (!btn) return;
+
+  if (roadPulseIsInstalled()){
+    btn.disabled = true;
+    btn.classList.add("installed");
+    btn.innerHTML = '✓ <span class="install-label">Installed</span>';
+    btn.title = "RoadPulse AI is installed";
+    return;
+  }
+
+  btn.disabled = false;
+  btn.classList.remove("installed");
+  btn.innerHTML = '⬇ <span class="install-label">Install</span>';
+
+  if (roadPulseIsIOS()){
+    btn.title = "Install RoadPulse on iPhone / iPad";
+  }else{
+    btn.title = "Install RoadPulse AI";
+  }
+}
+
+async function installRoadPulseApp(){
+  if (roadPulseIsInstalled()){
+    updateInstallButton();
+    return;
+  }
+
+  if (roadPulseInstallPrompt){
+    const promptEvent = roadPulseInstallPrompt;
+    roadPulseInstallPrompt = null;
+
+    try{
+      await promptEvent.prompt();
+      const choice = await promptEvent.userChoice;
+
+      if (choice?.outcome === "accepted"){
+        showPwaInstallToast("RoadPulse AI installation started.");
+      }else{
+        showPwaInstallToast("Installation cancelled.");
+      }
+    }catch(err){
+      console.error("RoadPulse install prompt failed:", err);
+      openRoadPulseInstallHelp(roadPulseIsAndroid() ? "android" : "other");
+    }
+
+    updateInstallButton();
+    return;
+  }
+
+  if (roadPulseIsIOS()){
+    openRoadPulseInstallHelp("ios");
+    return;
+  }
+
+  openRoadPulseInstallHelp(roadPulseIsAndroid() ? "android" : "other");
+}
+
+window.addEventListener("beforeinstallprompt", event=>{
+  event.preventDefault();
+  roadPulseInstallPrompt = event;
+  updateInstallButton();
 });
 
-self.addEventListener("fetch", event => {
-  const request = event.request;
-  if (request.method !== "GET") return;
+window.addEventListener("appinstalled", ()=>{
+  roadPulseInstallPrompt = null;
+  updateInstallButton();
+  closeRoadPulseInstallHelp();
+  showPwaInstallToast("RoadPulse AI installed successfully.");
+});
 
-  const url = new URL(request.url);
+window.addEventListener("load", async ()=>{
+  updateInstallButton();
 
-  // Authentication, routing, traffic and report APIs must always be live.
-  if (
-    url.origin === self.location.origin &&
-    url.pathname.startsWith("/api/")
-  ){
-    return;
-  }
+  if (!("serviceWorker" in navigator)) return;
 
-  // HTML: network first so a deployment is visible immediately, with an
-  // offline fallback to the last successful app shell.
-  if (request.mode === "navigate"){
-    event.respondWith(
-      fetch(request)
-        .then(response => {
-          if (response.ok){
-            event.waitUntil(
-              caches.open(APP_CACHE)
-                .then(cache => cache.put("/", response.clone()))
-                .catch(()=>{})
-            );
-          }
-          return response;
-        })
-        .catch(() => caches.match("/"))
+  // Only reload on controller replacement when this page was already controlled.
+  // This makes a newly deployed app.js/styles.css take effect in installed PWAs.
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", ()=>{
+    if (!hadController || roadPulseSwReloading) return;
+    roadPulseSwReloading = true;
+    window.location.reload();
+  });
+
+  try{
+    const registration = await navigator.serviceWorker.register(
+      "/service-worker.js",
+      {scope:"/", updateViaCache:"none"}
     );
-    return;
-  }
 
-  // Core app code: network first avoids stale JavaScript/CSS after an update.
-  if (
-    url.origin === self.location.origin &&
-    (
-      url.pathname === "/assets/app.js" ||
-      url.pathname === "/assets/styles.css" ||
-      url.pathname === "/assets/pwa.js" ||
-      url.pathname === "/manifest.webmanifest"
-    )
-  ){
-    event.respondWith(
-      fetch(request)
-        .then(response => {
-          if (response.ok){
-            event.waitUntil(
-              caches.open(APP_CACHE)
-                .then(cache => cache.put(request, response.clone()))
-                .catch(()=>{})
-            );
-          }
-          return response;
-        })
-        .catch(() => caches.match(request))
-    );
-    return;
-  }
-
-  // Same-origin static images/icons: cache first, then network and store.
-  if (
-    url.origin === self.location.origin &&
-    url.pathname.startsWith("/assets/")
-  ){
-    event.respondWith(
-      caches.open(APP_CACHE).then(async cache => {
-        const cached = await cache.match(request);
-        if (cached) return cached;
-
-        const response = await fetch(request);
-        if (response.ok){
-          event.waitUntil(cache.put(request, response.clone()).catch(()=>{}));
-        }
-        return response;
-      })
-    );
-    return;
-  }
-
-  // Leaflet library files can be cached. Map tiles intentionally stay network
-  // controlled to avoid huge/off-policy tile caches.
-  if (url.hostname === "unpkg.com" || url.hostname === "cdn.jsdelivr.net"){
-    event.respondWith(
-      caches.open(CDN_CACHE).then(async cache => {
-        const cached = await cache.match(request);
-        if (cached) return cached;
-
-        const response = await fetch(request);
-        if (response.ok || response.type === "opaque"){
-          event.waitUntil(cache.put(request, response.clone()).catch(()=>{}));
-        }
-        return response;
-      })
-    );
+    registration.update().catch(()=>{});
+  }catch(err){
+    console.error("RoadPulse service worker registration failed:", err);
+    showPwaInstallToast("Install service could not start. Refresh and try again.");
   }
 });
+
+window.installRoadPulseApp = installRoadPulseApp;
+window.closeRoadPulseInstallHelp = closeRoadPulseInstallHelp;
