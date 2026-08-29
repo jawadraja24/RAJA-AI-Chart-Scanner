@@ -1,4 +1,4 @@
-const ROADPULSE_PWA_BUILD = "webv24google1";
+const ROADPULSE_PWA_BUILD = "webv25navfix1";
 let roadPulseInstallPrompt = null;
 let roadPulseSwReloading = false;
 
