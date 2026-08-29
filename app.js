@@ -76,6 +76,12 @@ let navAudioContext = null;
 let navLastChimeKey = null;
 let mapBearingDeg = Number(safeLocalGet("roadpulse_map_bearing", "0")) || 0;
 let mapGestureState = null;
+let navSearchAbortController = null;
+let navSearchRequestSeq = 0;
+let lastGpsFixAt = 0;
+let gpsWatchStartedAt = 0;
+let lastUserMapGestureAt = 0;
+let mapResizeTimer = null;
 let walkingLiveViewStream = null;
 let navSpeechVoices = [];
 let adminData = null;
@@ -513,12 +519,18 @@ window.addEventListener("load", async ()=>{
 window.addEventListener("online", updateNetworkBadge);
 window.addEventListener("offline", updateNetworkBadge);
 document.addEventListener("visibilitychange", ()=>{
-  if (
-    document.visibilityState === "visible" &&
-    navigationActive
-  ){
+  if (document.visibilityState !== "visible") return;
+
+  if (navigationActive){
     requestNavigationWakeLock();
   }
+
+  const gpsStale = !lastGpsFixAt || (Date.now() - lastGpsFixAt > 15000);
+  if (gpsStale){
+    startGpsWatch(true);
+  }
+
+  scheduleMapResize();
 });
 
 
@@ -557,18 +569,24 @@ async function userRegister(){
     email: byId("registerEmail").value.trim(),
     password: byId("registerPassword").value
   };
-  const r = await fetch("/api/auth/register", {
-    method:"POST", credentials:"include",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(payload)
-  });
-  const data = await r.json().catch(()=>({}));
-  if (!r.ok){
-    setUserAuthMessage(data.detail || "Could not create account.", true);
-    return;
+
+  try{
+    const r = await fetch("/api/auth/register", {
+      method:"POST", credentials:"include",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    });
+    const data = await r.json().catch(()=>({}));
+    if (!r.ok){
+      setUserAuthMessage(data.detail || "Could not create account.", true);
+      return;
+    }
+    currentUser = data.user;
+    await openUserApp();
+  }catch(err){
+    console.error("RoadPulse registration error:", err);
+    setUserAuthMessage("Network unavailable. Please try again.", true);
   }
-  currentUser = data.user;
-  await openUserApp();
 }
 
 async function userLogin(){
@@ -577,23 +595,33 @@ async function userLogin(){
     email: byId("loginEmail").value.trim(),
     password: byId("loginPassword").value
   };
-  const r = await fetch("/api/auth/login", {
-    method:"POST", credentials:"include",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(payload)
-  });
-  const data = await r.json().catch(()=>({}));
-  if (!r.ok){
-    setUserAuthMessage(data.detail || "Login failed.", true);
-    return;
+
+  try{
+    const r = await fetch("/api/auth/login", {
+      method:"POST", credentials:"include",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    });
+    const data = await r.json().catch(()=>({}));
+    if (!r.ok){
+      setUserAuthMessage(data.detail || "Login failed.", true);
+      return;
+    }
+    currentUser = data.user;
+    await openUserApp();
+  }catch(err){
+    console.error("RoadPulse login error:", err);
+    setUserAuthMessage("Network unavailable. Please try again.", true);
   }
-  currentUser = data.user;
-  await openUserApp();
 }
 
 async function userLogout(){
   stopGpsWatch();
   stopNavigation(false);
+
+  navSearchAbortController?.abort();
+  navSearchAbortController = null;
+  navSearchRequestSeq++;
 
   if (navSearchTimer){
     clearTimeout(navSearchTimer);
@@ -606,7 +634,11 @@ async function userLogout(){
   }
   if (map && trafficFlowLayer && map.hasLayer(trafficFlowLayer)) map.removeLayer(trafficFlowLayer);
   if (map && trafficIncidentLayer && map.hasLayer(trafficIncidentLayer)) map.removeLayer(trafficIncidentLayer);
-  await fetch("/api/auth/logout", {method:"POST", credentials:"include"});
+  try{
+    await fetch("/api/auth/logout", {method:"POST", credentials:"include"});
+  }catch(err){
+    console.warn("RoadPulse logout request failed:", err);
+  }
   currentUser = null;
   location.hash = "";
   showOnly("userAuthView");
@@ -620,7 +652,8 @@ async function openUserApp(){
   ensureMap();
   await refreshMapData();
   startGpsWatch();
-  setTimeout(()=> map && map.invalidateSize(), 50);
+  scheduleMapResize();
+  setTimeout(scheduleMapResize, 300);
 
   if (!proximityEvalTimer){
     proximityEvalTimer = setInterval(()=>{
@@ -632,7 +665,18 @@ async function openUserApp(){
 function ensureMap(){
   if (map) return;
 
-  map = L.map("map", {zoomControl:true}).setView([53.5511, 9.9937], 12);
+  map = L.map("map", {
+    zoomControl:true,
+    dragging:true,
+    touchZoom:true,
+    doubleClickZoom:true,
+    scrollWheelZoom:true,
+    boxZoom:true,
+    keyboard:true,
+    zoomAnimation:true,
+    fadeAnimation:true,
+    markerZoomAnimation:true
+  }).setView([53.5511, 9.9937], 12);
 
   map.createPane("basemap");
   map.getPane("basemap").style.zIndex = 200;
@@ -644,7 +688,9 @@ function ensureMap(){
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom:19,
     pane:"basemap",
-    attribution:'&copy; OpenStreetMap contributors'
+    attribution:'&copy; OpenStreetMap contributors',
+    updateWhenIdle:false,
+    keepBuffer:4
   }).addTo(map);
 
   incidentLayer = L.layerGroup().addTo(map);
@@ -677,23 +723,52 @@ function ensureMap(){
     }, 60000);
   }
 
+  const noteUserGesture = ()=>{
+    lastUserMapGestureAt = Date.now();
+  };
+
+  const container = map.getContainer();
+  container.addEventListener("pointerdown", noteUserGesture, {passive:true});
+  container.addEventListener("touchstart", noteUserGesture, {passive:true});
+  container.addEventListener("wheel", noteUserGesture, {passive:true});
+
+  const stopFollowForUserGesture = ()=>{
+    if (!navigationActive) return;
+    navFollowMode = false;
+    updateFollowButton();
+  };
+
   map.on("dragstart", ()=>{
-    if (navigationActive){
-      navFollowMode = false;
-      updateFollowButton();
-    }
+    noteUserGesture();
+    stopFollowForUserGesture();
   });
 
   map.on("zoomstart", ()=>{
-    if (navigationActive && map._loaded && map._animatingZoom !== true){
-      // User zoom gestures should not permanently fight the follow camera.
-      lastNavigationCameraUpdateAt = Date.now();
+    if (Date.now() - lastUserMapGestureAt < 800){
+      stopFollowForUserGesture();
     }
   });
 
   installRoadPulseMapGestures();
-  applyRoadPulseMapBearing(mapBearingDeg, false);
+  applyRoadPulseMapBearing(0, false);
+  scheduleMapResize();
 }
+
+function scheduleMapResize(){
+  clearTimeout(mapResizeTimer);
+  mapResizeTimer = setTimeout(()=>{
+    try{
+      map?.invalidateSize?.({pan:false});
+    }catch(_){}
+  }, 90);
+}
+
+window.addEventListener("resize", scheduleMapResize, {passive:true});
+window.addEventListener("orientationchange", ()=>{
+  scheduleMapResize();
+  setTimeout(scheduleMapResize, 350);
+}, {passive:true});
+window.visualViewport?.addEventListener?.("resize", scheduleMapResize, {passive:true});
 
 function normalizeBearing(value){
   let n = Number(value || 0) % 360;
@@ -717,25 +792,23 @@ function shortestAngleDelta(a,b){
 }
 
 function applyRoadPulseMapBearing(value, persist=true){
-  mapBearingDeg = normalizeBearing(value);
+  mapBearingDeg = 0;
+
   const pane = map?.getPane?.("mapPane");
   if (pane){
-    // Keep Leaflet's translate/zoom transform untouched.
-    // CSS rotate is composed separately so native panning stays responsive.
-    pane.style.transformOrigin = "50% 50%";
-    pane.style.rotate = `${mapBearingDeg}deg`;
+    pane.style.removeProperty("rotate");
+    pane.style.transformOrigin = "";
   }
 
   const compass = byId("mapCompassBtn");
   if (compass){
-    compass.style.setProperty("--map-bearing", `${-mapBearingDeg}deg`);
-    compass.title = mapBearingDeg === 0
-      ? "Map is north-up"
-      : `Reset map to north (${Math.round(mapBearingDeg)}°)`;
+    compass.style.setProperty("--map-bearing", "0deg");
+    compass.title = "Map is north-up";
+    compass.setAttribute("aria-label", "Map is north-up");
   }
 
   if (persist){
-    safeLocalSet("roadpulse_map_bearing", String(Math.round(mapBearingDeg * 10) / 10));
+    safeLocalSet("roadpulse_map_bearing", "0");
   }
 }
 
@@ -744,149 +817,224 @@ function resetMapBearing(){
 }
 
 function installRoadPulseMapGestures(){
-  const el = byId("map");
-  if (!el || el.dataset.roadpulseRotateReady === "1") return;
-  el.dataset.roadpulseRotateReady = "1";
+  if (!map) return;
 
-  let rafPending = false;
-  let pendingBearing = mapBearingDeg;
-
-  const drawBearing = ()=>{
-    rafPending = false;
-    applyRoadPulseMapBearing(pendingBearing, false);
-  };
-
-  el.addEventListener("touchstart", event=>{
-    if (event.touches.length !== 2){
-      mapGestureState = null;
-      return;
-    }
-
-    const a = event.touches[0];
-    const b = event.touches[1];
-    mapGestureState = {
-      startAngle:angleBetweenTouches(a,b),
-      startDistance:distanceBetweenTouches(a,b),
-      startBearing:mapBearingDeg,
-      rotating:false
-    };
-  }, {passive:true});
-
-  el.addEventListener("touchmove", event=>{
-    if (!mapGestureState || event.touches.length !== 2) return;
-
-    const a = event.touches[0];
-    const b = event.touches[1];
-    const angle = angleBetweenTouches(a,b);
-    const distance = distanceBetweenTouches(a,b);
-    const angleDelta = shortestAngleDelta(mapGestureState.startAngle, angle);
-    const distanceRatio = mapGestureState.startDistance
-      ? distance / mapGestureState.startDistance
-      : 1;
-
-    // Let Leaflet handle a normal pinch. Only switch to rotation when
-    // the user clearly twists two fingers and is not strongly pinching.
-    if (!mapGestureState.rotating){
-      const twistStrong = Math.abs(angleDelta) >= 10;
-      const pinchStrong = Math.abs(distanceRatio - 1) >= 0.075;
-      if (twistStrong && !pinchStrong){
-        mapGestureState.rotating = true;
-        try{ map?.touchZoom?.disable(); }catch(_){}
-      }
-    }
-
-    if (mapGestureState.rotating){
-      event.preventDefault();
-      pendingBearing = normalizeBearing(mapGestureState.startBearing + angleDelta);
-
-      if (!rafPending){
-        rafPending = true;
-        requestAnimationFrame(drawBearing);
-      }
-
-      navFollowMode = false;
-      updateFollowButton();
-    }
-  }, {passive:false});
-
-  const finish = ()=>{
-    if (mapGestureState?.rotating){
-      if (rafPending){
-        rafPending = false;
-        applyRoadPulseMapBearing(pendingBearing, false);
-      }
-      applyRoadPulseMapBearing(pendingBearing, true);
-      try{ map?.touchZoom?.enable(); }catch(_){}
-    }
-    mapGestureState = null;
-  };
-
-  el.addEventListener("touchend", finish, {passive:true});
-  el.addEventListener("touchcancel", finish, {passive:true});
+  try{ map.dragging?.enable(); }catch(_){}
+  try{ map.touchZoom?.enable(); }catch(_){}
+  try{ map.doubleClickZoom?.enable(); }catch(_){}
+  try{ map.scrollWheelZoom?.enable(); }catch(_){}
 }
-function startGpsWatch(){
+
+function startGpsWatch(force=false){
   if (!navigator.geolocation){
     setGpsBadge("GPS not supported", false);
     return;
   }
+
+  if (force && watchId !== null){
+    try{ navigator.geolocation.clearWatch(watchId); }catch(_){}
+    watchId = null;
+  }
+
   if (watchId !== null) return;
 
+  gpsWatchStartedAt = Date.now();
   setGpsBadge("Requesting GPS…", false);
+
   watchId = navigator.geolocation.watchPosition(
     onGpsPosition,
     onGpsError,
-    {enableHighAccuracy:true, maximumAge:5000, timeout:15000}
+    {
+      enableHighAccuracy:true,
+      maximumAge:1000,
+      timeout:20000
+    }
   );
 }
 
 function stopGpsWatch(){
   if (watchId !== null && navigator.geolocation){
-    navigator.geolocation.clearWatch(watchId);
+    try{ navigator.geolocation.clearWatch(watchId); }catch(_){}
   }
   watchId = null;
+  gpsWatchStartedAt = 0;
 }
 
 function onGpsPosition(pos){
+  if (!pos?.coords) return;
+
+  const rawLat = Number(pos.coords.latitude);
+  const rawLng = Number(pos.coords.longitude);
+  const rawAccuracy = Number(pos.coords.accuracy);
+  const timestamp = Number(pos.timestamp) || Date.now();
+
+  if (
+    !Number.isFinite(rawLat) ||
+    !Number.isFinite(rawLng) ||
+    rawLat < -90 || rawLat > 90 ||
+    rawLng < -180 || rawLng > 180
+  ){
+    return;
+  }
+
+  if (Date.now() - timestamp > 30000){
+    return;
+  }
+
+  const accuracy = Number.isFinite(rawAccuracy) && rawAccuracy > 0
+    ? rawAccuracy
+    : 9999;
+
+  if (accuracy > 2000){
+    setGpsBadge(`GPS weak · ±${Math.round(accuracy)}m`, false);
+    return;
+  }
+
+  let lat = rawLat;
+  let lng = rawLng;
+  let speed = Number(pos.coords.speed);
+  let heading = Number(pos.coords.heading);
+
+  speed = Number.isFinite(speed) && speed >= 0 ? speed : null;
+  heading = Number.isFinite(heading) && heading >= 0 && heading <= 360
+    ? heading
+    : null;
+
+  const previous = currentPosition;
+
+  if (previous?.timestamp){
+    const dt = Math.max(0.05, (timestamp - previous.timestamp) / 1000);
+    const rawDistance = haversineMeters(
+      previous.lat,
+      previous.lng,
+      rawLat,
+      rawLng
+    );
+    const impliedSpeed = rawDistance / dt;
+
+    const jumpAllowance = Math.max(
+      120,
+      accuracy * 2.5,
+      Number(previous.accuracy || 0) * 2.5
+    );
+
+    if (
+      dt < 10 &&
+      rawDistance > jumpAllowance &&
+      impliedSpeed > 75 &&
+      accuracy > 25
+    ){
+      setGpsBadge("GPS stabilizing…", false);
+      return;
+    }
+
+    if (
+      Number(previous.accuracy || 9999) <= 60 &&
+      accuracy > 120 &&
+      rawDistance > Math.max(90, accuracy * 0.6)
+    ){
+      setGpsBadge(`GPS weak · ±${Math.round(accuracy)}m`, false);
+      return;
+    }
+
+    let alpha = accuracy <= 15
+      ? 1
+      : accuracy <= 35
+        ? 0.82
+        : accuracy <= 80
+          ? 0.58
+          : 0.36;
+
+    if (speed != null && speed >= 3){
+      alpha = Math.max(alpha, 0.88);
+    }
+
+    lat = previous.lat + (rawLat - previous.lat) * alpha;
+    lng = previous.lng + (rawLng - previous.lng) * alpha;
+
+    if (speed == null && dt <= 10){
+      const derivedSpeed = rawDistance / dt;
+      if (Number.isFinite(derivedSpeed) && derivedSpeed <= 65){
+        speed = derivedSpeed;
+      }
+    }
+
+    if (heading == null && speed != null && speed >= 0.7){
+      heading = previous.heading ?? null;
+    }
+  }
+
   currentPosition = {
-    lat: pos.coords.latitude,
-    lng: pos.coords.longitude,
-    accuracy: pos.coords.accuracy,
-    speed: pos.coords.speed,
-    heading: pos.coords.heading
+    lat,
+    lng,
+    accuracy,
+    speed,
+    heading,
+    timestamp
   };
+  lastGpsFixAt = Date.now();
 
   const latlng = [currentPosition.lat, currentPosition.lng];
 
   if (!userMarker){
     userMarker = L.circleMarker(latlng, {
-      radius:9, color:"#ffffff", weight:3, fillColor:"#2d70d6", fillOpacity:1
-    }).addTo(map).bindPopup("<strong>Your live GPS location</strong>");
+      radius:9,
+      color:"#ffffff",
+      weight:3,
+      fillColor:"#2d70d6",
+      fillOpacity:1,
+      interactive:false
+    }).addTo(map);
   }else{
     userMarker.setLatLng(latlng);
   }
 
   if (!userAccuracyCircle){
     userAccuracyCircle = L.circle(latlng, {
-      radius:currentPosition.accuracy,
-      color:"#2d70d6", weight:1, fillOpacity:.08
+      radius:Math.min(currentPosition.accuracy, 1500),
+      color:"#2d70d6",
+      weight:1,
+      fillOpacity:.08,
+      interactive:false
     }).addTo(map);
   }else{
     userAccuracyCircle.setLatLng(latlng);
-    userAccuracyCircle.setRadius(currentPosition.accuracy);
+    userAccuracyCircle.setRadius(Math.min(currentPosition.accuracy, 1500));
   }
 
-  if (!map.__centeredOnUser){
-    map.setView(latlng, 15);
+  const waitMs = gpsWatchStartedAt ? Date.now() - gpsWatchStartedAt : 0;
+  const canUseInitialFix = currentPosition.accuracy <= 100 || waitMs >= 10000;
+
+  if (!map.__centeredOnUser && canUseInitialFix){
+    const initialZoom = currentPosition.accuracy <= 25
+      ? 17
+      : currentPosition.accuracy <= 80
+        ? 15
+        : 13;
+
+    map.setView(latlng, initialZoom, {animate:false});
     map.__centeredOnUser = true;
+    map.__initialGpsAccuracy = currentPosition.accuracy;
+  }else if (
+    map.__centeredOnUser &&
+    !navigationActive &&
+    Number(map.__initialGpsAccuracy || 9999) > 100 &&
+    currentPosition.accuracy <= 60 &&
+    currentPosition.accuracy < Number(map.__initialGpsAccuracy) * 0.6 &&
+    Date.now() - lastUserMapGestureAt > 2500
+  ){
+    map.__initialGpsAccuracy = currentPosition.accuracy;
+    map.flyTo(latlng, 16, {animate:true, duration:.45});
   }
 
   const speedKmh = currentPosition.speed != null && currentPosition.speed >= 0
     ? Math.round(currentPosition.speed * 3.6)
     : null;
 
+  const gpsGood = currentPosition.accuracy <= 100;
   setGpsBadge(
-    `GPS live · ±${Math.round(currentPosition.accuracy)}m`,
-    true
+    `${gpsGood ? "GPS live" : "GPS weak"} · ±${Math.round(currentPosition.accuracy)}m`,
+    gpsGood
   );
 
   const speedBadge = byId("speedBadge");
@@ -914,10 +1062,24 @@ function onGpsError(err){
     3:"GPS request timed out"
   };
   setGpsBadge(messages[err.code] || "GPS error", false);
+
+  // Do not repeatedly prompt after an explicit denial. For temporary mobile GPS
+  // failures/timeouts, restart a stale watcher after a short pause.
+  if (err?.code !== 1){
+    setTimeout(()=>{
+      if (
+        document.visibilityState === "visible" &&
+        (!lastGpsFixAt || Date.now() - lastGpsFixAt > 20000)
+      ){
+        startGpsWatch(true);
+      }
+    }, 5000);
+  }
 }
 
 function setGpsBadge(text, good){
   const el = byId("gpsBadge");
+  if (!el) return;
   el.textContent = text;
   el.classList.toggle("good", !!good);
   el.classList.toggle("warning", !good);
@@ -930,10 +1092,15 @@ function centerOnUser(){
   }
 
   if (map && currentPosition){
-    map.setView([currentPosition.lat, currentPosition.lng], 16);
-    userMarker && userMarker.openPopup();
+    const zoom = navigationActive ? navigationFollowZoom() : Math.max(16, map.getZoom());
+    map.stop();
+    map.flyTo(
+      [currentPosition.lat, currentPosition.lng],
+      zoom,
+      {animate:true, duration:.45}
+    );
   }else{
-    startGpsWatch();
+    startGpsWatch(true);
     setGpsBadge("Waiting for GPS…", false);
   }
 }
@@ -969,16 +1136,26 @@ function updateNavigationCamera(force=false){
   if (!map || !currentPosition || !navigationActive || !navFollowMode) return;
 
   const now = Date.now();
-  if (!force && now - lastNavigationCameraUpdateAt < 900) return;
+  if (!force && now - lastNavigationCameraUpdateAt < 700) return;
   lastNavigationCameraUpdateAt = now;
 
   const target = [currentPosition.lat,currentPosition.lng];
   const zoom = navigationFollowZoom();
 
+  try{ map.stop(); }catch(_){}
+
   if (Math.abs(map.getZoom() - zoom) >= 1){
-    map.setView(target, zoom, {animate:true});
+    map.setView(target, zoom, {
+      animate:true,
+      pan:{animate:true, duration:.28},
+      zoom:{animate:true}
+    });
   }else{
-    map.panTo(target, {animate:true, duration:.35});
+    map.panTo(target, {
+      animate:true,
+      duration:.28,
+      noMoveStart:true
+    });
   }
 }
 
@@ -1094,63 +1271,101 @@ const reportStyle = {
 async function refreshMapData(){
   if (!map) return;
 
-  const r = await fetch("/api/map-data", {credentials:"include"});
-  if (r.status === 401){
-    await userLogout();
-    return;
+  try{
+    const r = await fetch("/api/map-data", {credentials:"include"});
+
+    if (r.status === 401){
+      await userLogout();
+      return;
+    }
+
+    if (!r.ok){
+      throw new Error(`Map data HTTP ${r.status}`);
+    }
+
+    const data = await r.json();
+    const reports = Array.isArray(data?.reports) ? data.reports : [];
+    const cameras = Array.isArray(data?.cameras) ? data.cameras : [];
+    const settings = data?.settings || {};
+
+    incidentLayer?.clearLayers();
+    cameraLayer?.clearLayers();
+
+    reports.forEach(item=>{
+      const lat = Number(item.lat);
+      const lng = Number(item.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+      const style = reportStyle[item.type] || {color:"#666", emoji:"•"};
+      const marker = L.circleMarker([lat,lng], {
+        radius:9, color:"#fff", weight:2, fillColor:style.color, fillOpacity:.95
+      });
+      marker.bindPopup(`
+        <div class="popup-title">${style.emoji} ${esc(item.type)}</div>
+        <div>${esc(item.location || "Reported location")}</div>
+        <div class="popup-meta">Community verified</div>
+      `);
+      marker.addTo(incidentLayer);
+    });
+
+    cameras.forEach(item=>{
+      const lat = Number(item.lat);
+      const lng = Number(item.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+      const marker = L.marker([lat,lng], {
+        title:`Camera: ${item.location || ""}`
+      });
+      const limit = item.speed_limit ? `${item.speed_limit} km/h` : "Speed unknown";
+      marker.bindPopup(`
+        <div class="popup-title">📷 ${esc(item.camera_type || "fixed")} camera</div>
+        <div>${esc(item.location || "Camera location")}</div>
+        <div class="popup-meta">${esc(limit)} · confidence ${esc(item.confidence ?? "—")}%</div>
+      `);
+      marker.addTo(cameraLayer);
+    });
+
+    const incidentBadge = byId("incidentBadge");
+    if (incidentBadge){
+      incidentBadge.textContent = `${reports.length} verified reports`;
+    }
+
+    proximitySettings = {
+      enabled: settings.proximity_alerts !== false,
+      voice: settings.voice_alerts !== false,
+      maxDistanceM: Number(settings.alert_distance_m || 1200),
+      urgentDistanceM: Number(settings.urgent_alert_distance_m || 400),
+      cooldownS: Number(settings.alert_repeat_cooldown_s || 300),
+      language: settings.voice_language || "en-GB",
+      defaultCountry: settings.default_country || "DE",
+      cameraWarningMode: settings.camera_warning_mode || "country_compliance"
+    };
+
+    proximityTargets = buildProximityTargets({
+      ...data,
+      reports,
+      cameras,
+      settings
+    });
+    updateVoiceBadge();
+    evaluateProximityAlerts();
+
+    trafficConfigured = !!settings.traffic_available;
+    const adminTrafficEnabled = settings.traffic_layer !== false;
+    applyTrafficLayerState(adminTrafficEnabled);
+  }catch(err){
+    console.error("RoadPulse map data refresh failed:", err);
+    updateNetworkBadge();
+
+    const trafficBadge = byId("trafficBadge");
+    if (trafficBadge){
+      trafficBadge.textContent = navigator.onLine === false
+        ? "Traffic offline"
+        : "Traffic unavailable";
+      trafficBadge.classList.remove("on","off");
+      trafficBadge.classList.add("error");
+    }
   }
-  if (!r.ok) return;
-
-  const data = await r.json();
-  incidentLayer.clearLayers();
-  cameraLayer.clearLayers();
-
-  data.reports.forEach(item=>{
-    const style = reportStyle[item.type] || {color:"#666", emoji:"•"};
-    const marker = L.circleMarker([item.lat,item.lng], {
-      radius:9, color:"#fff", weight:2, fillColor:style.color, fillOpacity:.95
-    });
-    marker.bindPopup(`
-      <div class="popup-title">${style.emoji} ${esc(item.type)}</div>
-      <div>${esc(item.location || "Reported location")}</div>
-      <div class="popup-meta">Community verified</div>
-    `);
-    marker.addTo(incidentLayer);
-  });
-
-  data.cameras.forEach(item=>{
-    const marker = L.marker([item.lat,item.lng], {
-      title:`Camera: ${item.location}`
-    });
-    const limit = item.speed_limit ? `${item.speed_limit} km/h` : "Speed unknown";
-    marker.bindPopup(`
-      <div class="popup-title">📷 ${esc(item.camera_type)} camera</div>
-      <div>${esc(item.location)}</div>
-      <div class="popup-meta">${esc(limit)} · confidence ${esc(item.confidence)}%</div>
-    `);
-    marker.addTo(cameraLayer);
-  });
-
-  byId("incidentBadge").textContent = `${data.reports.length} verified reports`;
-
-  proximitySettings = {
-    enabled: data.settings.proximity_alerts !== false,
-    voice: data.settings.voice_alerts !== false,
-    maxDistanceM: Number(data.settings.alert_distance_m || 1200),
-    urgentDistanceM: Number(data.settings.urgent_alert_distance_m || 400),
-    cooldownS: Number(data.settings.alert_repeat_cooldown_s || 300),
-    language: data.settings.voice_language || "en-GB",
-    defaultCountry: data.settings.default_country || "DE",
-    cameraWarningMode: data.settings.camera_warning_mode || "country_compliance"
-  };
-
-  proximityTargets = buildProximityTargets(data);
-  updateVoiceBadge();
-  evaluateProximityAlerts();
-
-  trafficConfigured = !!data.settings.traffic_available;
-  const adminTrafficEnabled = data.settings.traffic_layer !== false;
-  applyTrafficLayerState(adminTrafficEnabled);
 }
 
 function applyTrafficLayerState(adminTrafficEnabled=true){
@@ -1310,6 +1525,8 @@ function onDestinationSearchInput(){
   if (!input) return;
 
   const q = input.value.trim();
+  navSearchResults = [];
+
   if (navDestination && !navigationActive && q !== navDestination.name){
     navDestination = null;
     updateDestinationActionButton();
@@ -1321,7 +1538,9 @@ function onDestinationSearchInput(){
   }
 
   if (q.length < 2){
-    navSearchResults = [];
+    navSearchAbortController?.abort();
+    navSearchAbortController = null;
+    navSearchRequestSeq++;
     byId("destinationResults")?.classList.add("hidden");
     renderDestinationQuickList();
     return;
@@ -1338,12 +1557,19 @@ async function searchDestinations(q){
   const resultsBox = byId("destinationResults");
   if (!resultsBox) return;
 
+  const query = String(q || "").trim();
+  if (query.length < 2) return;
+
+  const requestSeq = ++navSearchRequestSeq;
+  navSearchAbortController?.abort();
+  navSearchAbortController = new AbortController();
+
   resultsBox.innerHTML =
     '<div class="destination-result"><div class="destination-result-icon">…</div><div><strong>Searching</strong><small>Finding destinations near you</small></div></div>';
   resultsBox.classList.remove("hidden");
 
   const params = new URLSearchParams({
-    q,
+    q:query,
     limit:"6",
     language: userLanguage || "en-GB"
   });
@@ -1356,7 +1582,10 @@ async function searchDestinations(q){
   try{
     const r = await fetch(
       `/api/navigation/search?${params.toString()}`,
-      {credentials:"include"}
+      {
+        credentials:"include",
+        signal:navSearchAbortController.signal
+      }
     );
 
     const data = await r.json().catch(()=>({}));
@@ -1365,12 +1594,24 @@ async function searchDestinations(q){
       throw new Error(data.detail || "Search failed");
     }
 
-    navSearchResults = data.results || [];
+    const currentQuery = byId("destinationSearchInput")?.value.trim() || "";
+    if (requestSeq !== navSearchRequestSeq || currentQuery !== query){
+      return;
+    }
+
+    navSearchResults = Array.isArray(data.results) ? data.results : [];
     renderDestinationResults();
   }catch(err){
+    if (err?.name === "AbortError") return;
+    if (requestSeq !== navSearchRequestSeq) return;
+
     navSearchResults = [];
     resultsBox.innerHTML =
       `<div class="destination-result"><div class="destination-result-icon">!</div><div><strong>Search unavailable</strong><small>${esc(err.message || "Please try again")}</small></div></div>`;
+  }finally{
+    if (requestSeq === navSearchRequestSeq){
+      navSearchAbortController = null;
+    }
   }
 }
 
@@ -1430,6 +1671,10 @@ function chooseDestinationResult(index){
 }
 
 function clearDestinationSearch(){
+  navSearchAbortController?.abort();
+  navSearchAbortController = null;
+  navSearchRequestSeq++;
+
   const input = byId("destinationSearchInput");
   if (input) input.value = "";
   navSearchResults = [];
@@ -1710,12 +1955,17 @@ function updateNavigationProgress(){
   const walking = navigationMode === "pedestrian";
   const cycling = navigationMode === "bicycle";
   const offRouteDistance = walking ? 45 : (cycling ? 65 : 120);
+  const gpsAccuracyAllowance = Math.min(
+    150,
+    Math.max(0, Number(currentPosition.accuracy || 0)) * 1.15
+  );
+  const effectiveOffRouteDistance = offRouteDistance + gpsAccuracyAllowance;
   const movementThreshold = walking ? 0.35 : (cycling ? 1.0 : 2.5);
   const rerouteCooldown = walking ? 20000 : (cycling ? 25000 : 35000);
 
-  // Automatic off-route reroute, tuned separately for walking and driving.
+  // Include GPS uncertainty so weak mobile fixes do not cause false reroutes.
   if (
-    nearest.distanceM > offRouteDistance &&
+    nearest.distanceM > effectiveOffRouteDistance &&
     speed > movementThreshold &&
     now - navLastRerouteAt > rerouteCooldown
   ){
@@ -1741,7 +1991,12 @@ function updateNavigationProgress(){
     navDestination.lng
   );
 
-  if (destinationDistance < (navigationMode === "pedestrian" ? 22 : (navigationMode === "bicycle" ? 25 : 35))){
+  const arrivalThreshold = navigationMode === "pedestrian"
+    ? 22
+    : (navigationMode === "bicycle" ? 25 : 35);
+  const arrivalAccuracyOk = Number(currentPosition.accuracy || 9999) <= 80;
+
+  if (destinationDistance < arrivalThreshold && arrivalAccuracyOk){
     byId("navManeuverIcon").textContent = "✓";
     byId("navInstruction").textContent = t("arrived");
     byId("navInstructionDistance").textContent = "";
@@ -1762,21 +2017,33 @@ function updateNavigationProgress(){
 function nearestRoutePoint(lat,lng){
   if (navRoutePoints.length === 0) return null;
 
-  let bestIndex = 0;
-  let bestDistance = Infinity;
+  const findBest = (start,end)=>{
+    let bestIndex = start;
+    let bestDistance = Infinity;
 
-  // Search the whole route. TomTom route polylines are normally manageable,
-  // and this keeps the implementation robust after a reroute.
-  for (let i=0; i<navRoutePoints.length; i++){
-    const p = navRoutePoints[i];
-    const d = haversineMeters(lat,lng,p[0],p[1]);
-    if (d < bestDistance){
-      bestDistance = d;
-      bestIndex = i;
+    for (let i=start; i<end; i++){
+      const p = navRoutePoints[i];
+      const d = haversineMeters(lat,lng,p[0],p[1]);
+      if (d < bestDistance){
+        bestDistance = d;
+        bestIndex = i;
+      }
+    }
+
+    return {index:bestIndex, distanceM:bestDistance};
+  };
+
+  if (navLastProgressIndex > 0 && navRoutePoints.length > 350){
+    const start = Math.max(0, navLastProgressIndex - 40);
+    const end = Math.min(navRoutePoints.length, navLastProgressIndex + 320);
+    const local = findBest(start,end);
+
+    if (local.distanceM <= 500){
+      return local;
     }
   }
 
-  return {index:bestIndex, distanceM:bestDistance};
+  return findBest(0, navRoutePoints.length);
 }
 
 function findNextInstructionIndex(progressIndex){
@@ -2729,6 +2996,7 @@ function closeReportSheet(){
 
 async function submitReport(type){
   const msg = byId("reportMsg");
+  if (!msg) return;
   msg.classList.add("hidden");
 
   if (!currentPosition){
@@ -2739,28 +3007,42 @@ async function submitReport(type){
     return;
   }
 
-  const r = await fetch("/api/reports", {
-    method:"POST", credentials:"include",
-    headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({
-      type,
-      lat:currentPosition.lat,
-      lng:currentPosition.lng,
-      location:"User GPS report"
-    })
-  });
-
-  const data = await r.json().catch(()=>({}));
-  if (!r.ok){
-    msg.textContent = data.detail || "Could not submit report.";
+  if (Number(currentPosition.accuracy || 9999) > 250){
+    msg.textContent = `GPS is still weak (±${Math.round(currentPosition.accuracy)}m). Wait for a better fix before reporting.`;
     msg.classList.remove("hidden");
     msg.classList.add("error");
     return;
   }
 
-  msg.textContent = `${type} report sent for admin/community verification.`;
-  msg.classList.remove("hidden","error");
-  setTimeout(closeReportSheet, 1400);
+  try{
+    const r = await fetch("/api/reports", {
+      method:"POST", credentials:"include",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        type,
+        lat:currentPosition.lat,
+        lng:currentPosition.lng,
+        location:"User GPS report"
+      })
+    });
+
+    const data = await r.json().catch(()=>({}));
+    if (!r.ok){
+      msg.textContent = data.detail || "Could not submit report.";
+      msg.classList.remove("hidden");
+      msg.classList.add("error");
+      return;
+    }
+
+    msg.textContent = `${type} report sent for admin/community verification.`;
+    msg.classList.remove("hidden","error");
+    setTimeout(closeReportSheet, 1400);
+  }catch(err){
+    console.error("RoadPulse report submit failed:", err);
+    msg.textContent = "Network unavailable. Report was not sent.";
+    msg.classList.remove("hidden");
+    msg.classList.add("error");
+  }
 }
 
 function esc(v){
