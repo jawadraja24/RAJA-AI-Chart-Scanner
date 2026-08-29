@@ -2,19 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
   <meta name="theme-color" content="#0f7c4b">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="RoadPulse">
-  <link rel="manifest" href="/manifest.webmanifest?v=webv15pwa1">
+  <link rel="manifest" href="/manifest.webmanifest?v=webv20mobile1">
   <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">
   <title>RoadPulse AI</title>
 
   <link rel="preconnect" href="https://unpkg.com">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="/assets/styles.css?v=webv19mobilefix">
+  <link rel="stylesheet" href="/assets/styles.css?v=webv20mobile1">
 </head>
 <body>
 <main class="shell">
@@ -127,6 +127,9 @@
             id="destinationSearchInput"
             type="search"
             autocomplete="off"
+            enterkeyhint="search"
+            spellcheck="false"
+            aria-label="Search destination"
             placeholder="Where do you want to go?"
           >
           <button
@@ -404,7 +407,7 @@
 </main>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/assets/app.js?v=webv19mobilefix"></script>
-<script src="/assets/pwa.js?v=webv15pwa1"></script>
+<script src="/assets/app.js?v=webv20mobile1"></script>
+<script src="/assets/pwa.js?v=webv20mobile1"></script>
 </body>
 </html>
