@@ -665,6 +665,8 @@ async function openUserApp(){
 function ensureMap(){
   if (map) return;
 
+  const rotatePluginReady = typeof L.Map?.prototype?.setBearing === "function";
+
   map = L.map("map", {
     zoomControl:true,
     dragging:true,
@@ -675,7 +677,18 @@ function ensureMap(){
     keyboard:true,
     zoomAnimation:true,
     fadeAnimation:true,
-    markerZoomAnimation:true
+    markerZoomAnimation:true,
+
+    // Google-Maps-style two-finger rotation. These options are ignored by
+    // plain Leaflet, so the map still works if the rotate add-on fails to load.
+    rotate:rotatePluginReady,
+    bearing:rotatePluginReady ? normalizeBearing(mapBearingDeg) : 0,
+    touchRotate:rotatePluginReady,
+    dragRotate:false,
+    shiftKeyRotate:false,
+    rotateClockwise:true,
+    preventPageGestures:true,
+    rotateControl:false
   }).setView([53.5511, 9.9937], 12);
 
   map.createPane("basemap");
@@ -749,8 +762,28 @@ function ensureMap(){
     }
   });
 
+  // Rotation is a user gesture too. While navigating, rotating the map should
+  // release automatic follow so the camera does not fight the user's fingers.
+  map.on("rotatestart", ()=>{
+    noteUserGesture();
+    stopFollowForUserGesture();
+  });
+
+  map.on("rotate", ()=>{
+    const bearing = Number(map?.getBearing?.());
+    if (!Number.isFinite(bearing)) return;
+
+    mapBearingDeg = normalizeBearing(bearing);
+    updateRoadPulseCompass();
+
+    clearTimeout(window.__roadpulseBearingSaveTimer);
+    window.__roadpulseBearingSaveTimer = setTimeout(()=>{
+      safeLocalSet("roadpulse_map_bearing", String(Math.round(mapBearingDeg * 10) / 10));
+    }, 180);
+  });
+
   installRoadPulseMapGestures();
-  applyRoadPulseMapBearing(0, false);
+  applyRoadPulseMapBearing(mapBearingDeg, false);
   scheduleMapResize();
 }
 
@@ -791,24 +824,34 @@ function shortestAngleDelta(a,b){
   return d;
 }
 
-function applyRoadPulseMapBearing(value, persist=true){
-  mapBearingDeg = 0;
-
-  const pane = map?.getPane?.("mapPane");
-  if (pane){
-    pane.style.removeProperty("rotate");
-    pane.style.transformOrigin = "";
-  }
-
+function updateRoadPulseCompass(){
   const compass = byId("mapCompassBtn");
-  if (compass){
-    compass.style.setProperty("--map-bearing", "0deg");
-    compass.title = "Map is north-up";
-    compass.setAttribute("aria-label", "Map is north-up");
+  if (!compass) return;
+
+  const rounded = Math.round(normalizeBearing(mapBearingDeg));
+  compass.style.setProperty("--map-bearing", `${-rounded}deg`);
+  compass.title = rounded === 0
+    ? "Map is north-up"
+    : `Reset map to north (${rounded}°)`;
+  compass.setAttribute("aria-label", compass.title);
+}
+
+function applyRoadPulseMapBearing(value, persist=true){
+  const next = normalizeBearing(value);
+
+  if (map && typeof map.setBearing === "function"){
+    map.setBearing(next);
+    const actual = Number(map.getBearing?.());
+    mapBearingDeg = Number.isFinite(actual) ? normalizeBearing(actual) : next;
+  }else{
+    // Graceful fallback when the rotate add-on is unavailable.
+    mapBearingDeg = 0;
   }
+
+  updateRoadPulseCompass();
 
   if (persist){
-    safeLocalSet("roadpulse_map_bearing", "0");
+    safeLocalSet("roadpulse_map_bearing", String(Math.round(mapBearingDeg * 10) / 10));
   }
 }
 
@@ -823,6 +866,10 @@ function installRoadPulseMapGestures(){
   try{ map.touchZoom?.enable(); }catch(_){}
   try{ map.doubleClickZoom?.enable(); }catch(_){}
   try{ map.scrollWheelZoom?.enable(); }catch(_){}
+
+  // The rotate add-on supplies a real bearing-aware touch handler instead of
+  // CSS-rotating Leaflet's pane. This keeps panning, markers and routes aligned.
+  try{ map.touchRotate?.enable?.(); }catch(_){}
 }
 
 function startGpsWatch(force=false){
