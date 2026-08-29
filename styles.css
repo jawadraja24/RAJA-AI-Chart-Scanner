@@ -2188,3 +2188,84 @@ html, body{
 #map .leaflet-route-pane path{
   pointer-events:none !important;
 }
+
+/* ============================================================
+   RoadPulse v24 — Google-like mobile map controls
+   - sensitive two-finger rotate is handled in app.js
+   - compass is always tappable and never sits on traffic/status UI
+   - mobile navigation keeps the map visually clean
+   ============================================================ */
+.map-compass-btn{
+  pointer-events:auto !important;
+  cursor:pointer;
+  -webkit-tap-highlight-color:transparent;
+  transition:transform .14s ease, box-shadow .14s ease, background .14s ease;
+}
+.map-compass-btn:active{
+  transform:scale(.93);
+}
+.map-compass-btn.rotated{
+  background:#fff !important;
+  box-shadow:0 8px 26px rgba(16,35,31,.22) !important;
+}
+.map-compass-btn .compass-arrow{
+  transform:rotate(calc(var(--map-bearing) - 90deg));
+  transform-origin:50% 50%;
+  will-change:transform;
+}
+
+@media (max-width:700px){
+  /* Google Maps does not leave a large traffic legend covering the phone map.
+     Traffic remains visible on the roads and can still be toggled by the badge. */
+  .traffic-legend{
+    display:none !important;
+  }
+
+  /* During turn-by-turn navigation the map itself should stay readable. */
+  body.navigation-active .map-status,
+  .navigation-active .map-status{
+    display:none !important;
+  }
+
+  /* Stack map actions on the right, clear of top guidance and bottom summary. */
+  .map-compass-btn{
+    top:auto !important;
+    right:10px !important;
+    bottom:72px !important;
+    width:46px !important;
+    height:46px !important;
+    z-index:760 !important;
+  }
+
+  body.navigation-active .map-compass-btn,
+  .navigation-active .map-compass-btn{
+    top:auto !important;
+    right:10px !important;
+    bottom:190px !important;
+  }
+
+  body.navigation-active .map-recenter-btn,
+  .navigation-active .map-recenter-btn{
+    top:auto !important;
+    right:10px !important;
+    bottom:132px !important;
+    z-index:755 !important;
+  }
+
+  /* Prevent the hidden status area from reserving/receiving touches. */
+  body.navigation-active #trafficBadge,
+  body.navigation-active #gpsBadge,
+  body.navigation-active #speedBadge{
+    pointer-events:none !important;
+  }
+}
+
+/* Google-style compass: hidden while the map is already north-up. */
+.map-compass-btn.north-up{
+  opacity:0 !important;
+  pointer-events:none !important;
+  transform:scale(.84);
+}
+.map-compass-btn:not(.north-up){
+  opacity:1 !important;
+}
