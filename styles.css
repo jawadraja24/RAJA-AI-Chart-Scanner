@@ -2167,3 +2167,24 @@ html, body{
   -webkit-user-select:none;
   user-select:none;
 }
+
+
+/* ============================================================
+   RoadPulse v23 — native Google-style gesture ownership
+   ============================================================ */
+#map,
+#map.leaflet-container{
+  touch-action:none !important;
+  overscroll-behavior:none !important;
+  -ms-touch-action:none !important;
+}
+
+#map.leaflet-grab{ cursor:grab; }
+#map.leaflet-dragging{ cursor:grabbing; }
+
+/* Never put pointer interception on the route itself. */
+#map .leaflet-route-pane,
+#map .leaflet-route-pane svg,
+#map .leaflet-route-pane path{
+  pointer-events:none !important;
+}
