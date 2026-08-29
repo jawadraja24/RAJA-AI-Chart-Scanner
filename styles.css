@@ -2269,3 +2269,38 @@ html, body{
 .map-compass-btn:not(.north-up){
   opacity:1 !important;
 }
+
+/* ============================================================
+   RoadPulse v25 — navigation GPS confidence
+   Keep the two essential live readings visible without restoring the large
+   status row that previously covered the mobile map.
+   ============================================================ */
+@media (max-width:700px){
+  body.navigation-active .map-status,
+  .navigation-active .map-status{
+    display:flex !important;
+    top:98px !important;
+    left:8px !important;
+    right:auto !important;
+    width:auto !important;
+    max-width:calc(100% - 16px) !important;
+    gap:5px !important;
+    pointer-events:none !important;
+  }
+
+  body.navigation-active .map-status > *,
+  .navigation-active .map-status > *{
+    display:none !important;
+  }
+
+  body.navigation-active #gpsBadge,
+  body.navigation-active #speedBadge,
+  .navigation-active #gpsBadge,
+  .navigation-active #speedBadge{
+    display:inline-flex !important;
+    min-height:28px;
+    padding:5px 8px !important;
+    font-size:10px !important;
+    align-items:center;
+  }
+}
