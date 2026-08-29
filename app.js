@@ -76,6 +76,9 @@ let navAudioContext = null;
 let navLastChimeKey = null;
 let mapBearingDeg = Number(safeLocalGet("roadpulse_map_bearing", "0")) || 0;
 let mapGestureState = null;
+let mapRotateRaf = 0;
+let mapRotatePendingBearing = null;
+let routeRotateRedrawTimer = null;
 let navSearchAbortController = null;
 let navSearchRequestSeq = 0;
 let lastGpsFixAt = 0;
@@ -683,7 +686,7 @@ function ensureMap(){
     // plain Leaflet, so the map still works if the rotate add-on fails to load.
     rotate:rotatePluginReady,
     bearing:rotatePluginReady ? normalizeBearing(mapBearingDeg) : 0,
-    touchRotate:rotatePluginReady,
+    touchRotate:false,
     dragRotate:false,
     shiftKeyRotate:false,
     rotateClockwise:true,
@@ -697,6 +700,10 @@ function ensureMap(){
   map.createPane("traffic");
   map.getPane("traffic").style.zIndex = 260;
   map.getPane("traffic").style.pointerEvents = "none";
+
+  map.createPane("route");
+  map.getPane("route").style.zIndex = 430;
+  map.getPane("route").style.pointerEvents = "none";
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom:19,
@@ -775,6 +782,16 @@ function ensureMap(){
 
     mapBearingDeg = normalizeBearing(bearing);
     updateRoadPulseCompass();
+
+    // Some mobile GPUs defer SVG repaint during a bearing change. Redraw the
+    // navigation path after the fingers settle so the route can never vanish.
+    clearTimeout(routeRotateRedrawTimer);
+    routeRotateRedrawTimer = setTimeout(()=>{
+      try{ navRouteOutlineLayer?.redraw?.(); }catch(_){}
+      try{ navRouteLayer?.redraw?.(); }catch(_){}
+      try{ navRouteOutlineLayer?.bringToFront?.(); }catch(_){}
+      try{ navRouteLayer?.bringToFront?.(); }catch(_){}
+    }, 70);
 
     clearTimeout(window.__roadpulseBearingSaveTimer);
     window.__roadpulseBearingSaveTimer = setTimeout(()=>{
@@ -867,9 +884,90 @@ function installRoadPulseMapGestures(){
   try{ map.doubleClickZoom?.enable(); }catch(_){}
   try{ map.scrollWheelZoom?.enable(); }catch(_){}
 
-  // The rotate add-on supplies a real bearing-aware touch handler instead of
-  // CSS-rotating Leaflet's pane. This keeps panning, markers and routes aligned.
-  try{ map.touchRotate?.enable?.(); }catch(_){}
+  const el = map.getContainer();
+  if (!el || el.dataset.roadpulseSmoothRotate === "1") return;
+  el.dataset.roadpulseSmoothRotate = "1";
+
+  // The add-on's stock touch rotation intentionally has a large twist
+  // threshold. RoadPulse uses a lower-deadzone bearing-aware overlay instead:
+  // Leaflet continues handling the same two fingers for pinch/drag while this
+  // handler only updates map bearing. No CSS rotation, no touchZoom disable,
+  // and no preventDefault => smooth simultaneous pinch + twist.
+  const begin = event=>{
+    if (!map || typeof map.setBearing !== "function") return;
+    if (event.touches?.length !== 2){
+      mapGestureState = null;
+      return;
+    }
+
+    const a = event.touches[0];
+    const b = event.touches[1];
+    mapGestureState = {
+      startAngle:angleBetweenTouches(a,b),
+      startBearing:Number(map.getBearing?.() || 0),
+      active:false
+    };
+  };
+
+  const move = event=>{
+    if (!mapGestureState || event.touches?.length !== 2) return;
+    if (!map || typeof map.setBearing !== "function") return;
+
+    const a = event.touches[0];
+    const b = event.touches[1];
+    const angle = angleBetweenTouches(a,b);
+    const delta = shortestAngleDelta(mapGestureState.startAngle, angle);
+
+    // Tiny dead-zone prevents accidental rotation during a pure pinch, while
+    // still feeling immediate instead of waiting for a ~30° twist.
+    if (!mapGestureState.active){
+      if (Math.abs(delta) < 2.5) return;
+      mapGestureState.active = true;
+      noteRoadPulseRotationGesture();
+    }
+
+    mapRotatePendingBearing = normalizeBearing(
+      mapGestureState.startBearing + delta
+    );
+
+    if (!mapRotateRaf){
+      mapRotateRaf = requestAnimationFrame(()=>{
+        mapRotateRaf = 0;
+        if (mapRotatePendingBearing == null) return;
+        try{ map.setBearing(mapRotatePendingBearing); }catch(_){}
+      });
+    }
+  };
+
+  const end = event=>{
+    if (event.touches?.length === 2){
+      begin(event);
+      return;
+    }
+
+    if (mapRotateRaf){
+      cancelAnimationFrame(mapRotateRaf);
+      mapRotateRaf = 0;
+    }
+    if (mapRotatePendingBearing != null && typeof map?.setBearing === "function"){
+      try{ map.setBearing(mapRotatePendingBearing); }catch(_){}
+    }
+    mapRotatePendingBearing = null;
+    mapGestureState = null;
+  };
+
+  el.addEventListener("touchstart", begin, {passive:true});
+  el.addEventListener("touchmove", move, {passive:true});
+  el.addEventListener("touchend", end, {passive:true});
+  el.addEventListener("touchcancel", end, {passive:true});
+}
+
+function noteRoadPulseRotationGesture(){
+  lastUserMapGestureAt = Date.now();
+  if (navigationActive){
+    navFollowMode = false;
+    updateFollowButton();
+  }
 }
 
 function startGpsWatch(force=false){
@@ -1830,6 +1928,7 @@ function applyNavigationRoute(data, isReroute=false){
       : {color:"#5b2aef", weight:9, dashArray:null};
 
   navRouteOutlineLayer = L.polyline(navRoutePoints, {
+    pane:"route",
     color:"#ffffff",
     weight:routeStyle.weight + 8,
     opacity:.98,
@@ -1839,6 +1938,7 @@ function applyNavigationRoute(data, isReroute=false){
   }).addTo(map);
 
   navRouteLayer = L.polyline(navRoutePoints, {
+    pane:"route",
     color:routeStyle.color,
     weight:routeStyle.weight,
     opacity:1,
@@ -1846,6 +1946,13 @@ function applyNavigationRoute(data, isReroute=false){
     lineCap:"round",
     dashArray:routeStyle.dashArray
   }).addTo(map);
+
+  requestAnimationFrame(()=>{
+    try{ navRouteOutlineLayer?.redraw?.(); }catch(_){}
+    try{ navRouteLayer?.redraw?.(); }catch(_){}
+    try{ navRouteOutlineLayer?.bringToFront?.(); }catch(_){}
+    try{ navRouteLayer?.bringToFront?.(); }catch(_){}
+  });
 
   renderDestinationMarker();
   updateTrafficClarity();
